@@ -28,6 +28,7 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/", get(|| async { asset("text/html; charset=utf-8", include_str!("../ui/index.html")) }))
         .route("/style.css", get(|| async { asset("text/css", include_str!("../ui/style.css")) }))
         .route("/app.js", get(|| async { asset("text/javascript", include_str!("../ui/app.js")) }))
+        .route("/api/dashboard/view.js", get(|| async { asset("text/javascript", include_str!("../ui/view.js")) }))
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/sync", post(sync))
