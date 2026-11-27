@@ -188,12 +188,16 @@ const exactFormat = new Intl.DateTimeFormat(undefined, {
   year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
 });
 
-function backupTime(at, now) {
-  const date = new Date(at);
+function relativeDay(date, now) {
   const localDay = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
   const days = (localDay(date) - localDay(now)) / 86_400_000;
-  const day = ({ "-1": "Yesterday", 0: "Today", 1: "Tomorrow" })[days] ||
+  return ({ "-1": "Yesterday", 0: "Today", 1: "Tomorrow" })[days] ||
     (date.getFullYear() === now.getFullYear() ? dayFormat : dateFormat).format(date);
+}
+
+function backupTime(at, now) {
+  const date = new Date(at);
+  const day = now ? relativeDay(date, now) : dateFormat.format(date);
   return `<time datetime="${date.toISOString()}" title="${escape(exactFormat.format(date))}">${escape(day)} at ${escape(clockFormat.format(date))}</time>`;
 }
 
@@ -214,10 +218,14 @@ export function renderBackupSummary({ last, next, schedule }) {
 
 export function renderSnapshots(list) {
   const size = (bytes) => bytes == null ? "—" : bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`;
-  const rows = list.map((item) => `<tr><td>${escape(item.id.split("/")[0])}</td><td>${escape(time(item.time))}</td>
-    <td>${size(item.size)}</td><td><button type="button" data-restore="${escape(item.id)}">Restore</button></td></tr>`);
-  updateHtml($("snapshot-list"), rows.length ? `<div class="table-scroll"><table><thead>
-    <tr><th>Retention</th><th>Created</th><th>Size</th><th>Action</th></tr></thead><tbody>${rows.join("")}</tbody></table></div>` :
+  const rows = list.map((item) => `<tr role="row">
+    <td class="snapshot-created" role="cell">${backupTime(item.time)}</td>
+    <td class="snapshot-tier" role="cell">${escape(item.id.split("/")[0])}</td>
+    <td class="snapshot-size" role="cell">${size(item.size)}</td>
+    <td class="snapshot-action" role="cell"><button type="button" data-restore="${escape(item.id)}">Restore</button></td></tr>`);
+  updateHtml($("snapshot-list"), rows.length ? `<table class="snapshot-table" role="table" aria-label="Backup snapshots">
+    <thead role="rowgroup"><tr role="row"><th scope="col">Created</th><th scope="col">Retention</th><th scope="col">Size</th><th class="snapshot-action" scope="col">Action</th></tr></thead>
+    <tbody role="rowgroup">${rows.join("")}</tbody></table>` :
     '<p class="muted">No snapshots yet.</p>');
 }
 
