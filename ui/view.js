@@ -5,7 +5,9 @@ const escape = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => (
 
 export const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 export const time = (ms) => new Date(ms).toLocaleString();
-export const appLink = (name, view = "overview") => `#${new URLSearchParams({ app: name, ...(view !== "overview" && { view }) })}`;
+export const appLink = (name, view = "overview", container) => `#${new URLSearchParams({
+  app: name, ...(view !== "overview" && { view }), ...(container && { container }),
+})}`;
 const age = (at) => {
   const minutes = Math.max(0, Math.floor((Date.now() - at) / 60_000));
   if (!minutes) return "Just now";
@@ -142,11 +144,24 @@ export function renderApps(apps, view) {
   $("empty").textContent = "No apps yet. Add an app under apps/ in the infra repository.";
 }
 
-function containerRow(container) {
-  const { service, health, state, image, status } = container;
+export function renderLogContainers(app, selected) {
+  const containers = [...app.containers].sort((a, b) => a.name.localeCompare(b.name));
+  const options = containers.map(({ id, name, state }) => `<option value="${escape(id)}">${escape(`${name} (${state})`)}</option>`);
+  if (selected && !containers.some(({ id }) => id === selected)) {
+    options.push(`<option value="${escape(selected)}" disabled>Container unavailable</option>`);
+  }
+  const select = $("log-container");
+  updateHtml(select, '<option value="">All app containers</option>' + options.join(""));
+  select.value = selected || "";
+}
+
+function containerRow(app, container) {
+  const { id, name, service, health, state, image, status } = container;
   const tone = failing(container) ? "bad" : health === "starting" ? "busy" : state === "running" ? "good" : "muted";
-  return `<tr role="row"><th role="rowheader" scope="row">${escape(service)}</th><td role="cell">${statusHtml({ tone, label: health || state })}</td>
-    <td role="cell" class="image-cell"><code>${escape(image)}</code></td><td role="cell" class="uptime-cell">${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</td></tr>`;
+  return `<tr role="row"><th role="rowheader" scope="row">${escape(service)}
+    ${name === service ? "" : `<span class="cell-meta">${escape(name)}</span>`}</th><td role="cell">${statusHtml({ tone, label: health || state })}</td>
+    <td role="cell" class="image-cell"><code>${escape(image)}</code></td><td role="cell" class="uptime-cell">${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</td>
+    <td role="cell" class="logs-cell"><a class="logs-link" href="${appLink(app.name, "logs", id)}" aria-label="Logs for ${escape(name)}">${icon("terminal")}<span>Logs</span></a></td></tr>`;
 }
 
 export function renderOverview(app, view) {
@@ -165,8 +180,8 @@ export function renderOverview(app, view) {
     <dt>Deployed release</dt><dd class="release">${release.join("") || '<span class="muted">Not deployed</span>'}</dd>
     ${imageCheck || ""}
   </dl><h2>Containers</h2>${app.containers.length ? `<div class="table-scroll">
-    <table class="container-table" role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Service</th><th scope="col">Health</th><th scope="col">Image</th><th scope="col">Status</th></tr></thead>
-    <tbody role="rowgroup">${app.containers.map(containerRow).join("")}</tbody></table></div>` :
+    <table class="container-table" role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Service</th><th scope="col">Health</th><th scope="col">Image</th><th scope="col">Status</th><th scope="col" class="logs-cell">Output</th></tr></thead>
+    <tbody role="rowgroup">${app.containers.map((container) => containerRow(app, container)).join("")}</tbody></table></div>` :
     `<p class="muted">${view.runtime_error ? "Container status is unavailable." : "No containers."}</p>`}`);
 }
 

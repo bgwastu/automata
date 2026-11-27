@@ -78,6 +78,7 @@ pub struct Container {
     pub id: String,
     pub app: String,
     pub service: String,
+    pub name: String,
     pub state: String,
     pub health: Option<String>,
     pub status: String,
@@ -111,6 +112,7 @@ pub async fn containers() -> Result<Vec<Container>> {
             Ok(Container {
                 app: labels.get("automata.app").unwrap_or(&"").to_string(),
                 service: labels.get("com.docker.compose.service").map_or(c.names.clone(), |s| s.to_string()),
+                name: c.names,
                 id: c.id,
                 state: c.state,
                 health,
@@ -119,6 +121,28 @@ pub async fn containers() -> Result<Vec<Container>> {
             })
         })
         .collect()
+}
+
+/// Resolve a dashboard container ID to an immutable full ID, after checking its app label.
+pub async fn app_container_id(app: &str, id: &str) -> Option<String> {
+    if !matches!(id.len(), 12 | 64) || !id.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let record = output(docker([
+        "inspect",
+        "--type=container",
+        "--format",
+        "{{.Id}} {{index .Config.Labels \"automata.app\"}}",
+        id,
+    ]))
+    .await
+    .ok()?;
+    let (full_id, owner) = record.trim_end().split_once(' ')?;
+    (owner == app
+        && full_id.len() == 64
+        && full_id.starts_with(&id.to_ascii_lowercase())
+        && full_id.bytes().all(|c| c.is_ascii_hexdigit()))
+    .then(|| full_id.into())
 }
 
 /// Create the shared network if needed and return its gateway address on the host.

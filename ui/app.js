@@ -1,4 +1,4 @@
-import { $, appLink, renderApps, renderHeader, renderOverview, renderSnapshots, snapshotMessage, status, statusHtml, time } from "/api/dashboard/view.js";
+import { $, appLink, renderApps, renderHeader, renderLogContainers, renderOverview, renderSnapshots, snapshotMessage, status, statusHtml, time } from "/api/dashboard/view.js";
 
 import { followOutput } from "/api/dashboard/logs.js";
 
@@ -14,7 +14,7 @@ let stale = false;
 
 function route() {
   const hash = new URLSearchParams(location.hash.slice(1));
-  return { name: hash.get("app"), tab: hash.get("view") };
+  return { name: hash.get("app"), tab: hash.get("view"), container: hash.get("container") };
 }
 
 function navigate(hash, focus = false) {
@@ -42,7 +42,7 @@ function orderedApps() {
 }
 
 function render() {
-  const { name, tab } = route();
+  const { name, tab, container } = route();
   if (!view) return;
 
   const apps = orderedApps();
@@ -68,19 +68,21 @@ function render() {
   else home.removeAttribute("aria-current");
   if (name && !current) $("unavailable").textContent = `App “${name}” is unavailable.`;
 
-  if (current) renderWorkspace(current);
+  const id = activeView === "logs" ? container : null;
+  const selected = id && current?.containers.find((item) => item.id === id);
+  if (current) renderWorkspace(current, id);
   const key = current && JSON.stringify([
-    current.name, activeView,
-    activeView === "logs" ? current.rev : activeView === "backups" ? current.backup.last : null,
+    current.name, activeView, id,
+    activeView === "logs" ? (id ? selected?.state : current.rev) : activeView === "backups" ? current.backup.last : null,
   ]);
   if (key !== panelKey) {
     cleanupPanel?.();
     panelKey = key;
-    cleanupPanel = current && openPanel(current, activeView);
+    cleanupPanel = current && openPanel(current, activeView, id, selected);
   }
 }
 
-function renderWorkspace(app) {
+function renderWorkspace(app, container) {
   $("app-name").textContent = app.name;
   $("app-status").innerHTML = statusHtml(status(app, view.runtime_error));
   $("app-error").hidden = !app.error && !app.failed;
@@ -100,6 +102,8 @@ function renderWorkspace(app) {
   }
   $("overview").hidden = activeView !== "overview";
   $("output").hidden = !["logs", "task"].includes(activeView);
+  $("log-container-label").hidden = activeView !== "logs";
+  if (activeView === "logs") renderLogContainers(app, container);
   $("snapshots").hidden = activeView !== "backups";
   if (activeView === "overview") renderOverview(app, view);
   if (activeView === "backups") {
@@ -112,15 +116,20 @@ function renderWorkspace(app) {
   }
 }
 
-function openPanel(app, tab) {
+function openPanel(app, tab, id, container) {
   if (tab === "backups") {
     const request = new AbortController();
     loadSnapshots(app, request.signal);
     return () => request.abort();
   }
   if (tab === "logs" || tab === "task") {
-    const url = tab === "logs" && !app.rev ? null : `${appApi(app.name)}/${tab}${tab === "logs" ? "?details=true" : ""}`;
-    return followOutput(url, tab, refresh);
+    if (tab === "task") return followOutput(`${appApi(app.name)}/task`, tab, refresh);
+    const query = new URLSearchParams({ details: "true", ...(id && { container: id }) });
+    const url = (id ? container : app.rev) ? `${appApi(app.name)}/logs?${query}` : null;
+    return followOutput(url, tab, refresh, {
+      source: container?.name,
+      unavailable: id ? "This container is unavailable. Choose another container or view all app containers." : "This app has not been deployed.",
+    });
   }
 }
 
@@ -206,6 +215,9 @@ function appAction(kind, label, query = "") {
 $("sync").addEventListener("click", sync);
 $("restart").addEventListener("click", () => appAction("restart", "Restart requested."));
 $("backup").addEventListener("click", () => appAction("backup", "Backup requested."));
+$("log-container").addEventListener("change", (event) => {
+  if (current && activeView === "logs") navigate(appLink(current.name, "logs", event.target.value));
+});
 $("snapshot-list").addEventListener("click", (event) => {
   const button = event.target.closest("[data-restore]");
   if (!button || !current || $("restart").disabled) return;

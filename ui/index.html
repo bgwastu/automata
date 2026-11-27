@@ -98,6 +98,10 @@
         <div id="overview" class="overview" hidden></div>
         <section id="output" class="output" aria-label="Live output" hidden>
           <div class="log-toolbar">
+            <label id="log-container-label" class="log-container" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>
+              <select id="log-container" aria-label="Container"></select>
+            </label>
             <label><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="log-search" type="search" placeholder="Search output" aria-label="Search output" /></label>
             <button id="log-pause" type="button"></button>
             <button id="log-copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>

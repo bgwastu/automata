@@ -1,10 +1,10 @@
 import { $, icon } from "/api/dashboard/view.js";
 
-function entry(raw) {
-  const match = raw.match(/^(.+?)\s+\|\s?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)(?: (.*))?$/);
+function entry(raw, container) {
+  const match = raw.match(/^(?:(.+?)\s+\|\s?)?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)(?: (.*))?$/);
   if (!match) return { raw, message: raw };
   const [, source, timestamp, message = ""] = match;
-  return { raw, source: source.trim(), timestamp, message };
+  return { raw, source: source?.trim() || container, timestamp, message };
 }
 
 function line(record) {
@@ -26,7 +26,7 @@ function line(record) {
   return row;
 }
 
-export function followOutput(url, tab, refresh) {
+export function followOutput(url, tab, refresh, options = {}) {
   const log = $("log");
   const search = $("log-search");
   const pause = $("log-pause");
@@ -41,13 +41,15 @@ export function followOutput(url, tab, refresh) {
   let connected = false;
   let closed = false;
   let reconnecting = false;
+  let ended = "";
   let copyResult = "";
   const matches = (record) => record.raw.toLowerCase().includes(search.value.trim().toLowerCase());
 
   function showStatus() {
     const parts = [];
     if (paused) parts.push("Paused");
-    if (reconnecting) parts.push("Connection lost. Reconnecting…");
+    if (ended) parts.push(ended);
+    else if (reconnecting) parts.push("Connection lost. Reconnecting…");
     else if (!connected) parts.push("Connecting…");
     else if (!records.length) parts.push(tab === "logs" ? "No container output yet." : "No task output yet.");
     else if (log.hidden && search.value) parts.push("No matching output.");
@@ -87,7 +89,7 @@ export function followOutput(url, tab, refresh) {
   renderPause();
   showStatus();
   if (!url) {
-    status.textContent = "This app has not been deployed.";
+    status.textContent = options.unavailable;
     return;
   }
 
@@ -99,12 +101,20 @@ export function followOutput(url, tab, refresh) {
   };
   stream.onerror = () => {
     connected = false;
-    reconnecting = true;
+    reconnecting = stream.readyState !== EventSource.CLOSED;
+    if (!reconnecting) ended = "Log stream unavailable.";
     showStatus();
     refresh();
   };
+  const end = (message) => {
+    ended = message;
+    stream.close();
+    showStatus();
+  };
+  stream.addEventListener("end", () => end(records.length ? "End of available output." : "No recorded container output."));
+  stream.addEventListener("log-error", (event) => end(event.data));
   stream.onmessage = ({ data }) => {
-    const record = tab === "logs" ? entry(data) : { raw: data, message: data };
+    const record = tab === "logs" ? entry(data, options.source) : { raw: data, message: data };
     if (record.timestamp && known.has(data)) return;
     if (record.timestamp) known.add(data);
     records.push(record);

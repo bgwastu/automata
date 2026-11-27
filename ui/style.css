@@ -161,6 +161,10 @@ tbody td, tbody th { border-top: 1px solid var(--line); }
 .log-toolbar label { display: flex; flex: 1 1 150px; max-width: 360px; align-items: center; gap: 7px; min-height: 36px; border: 1px solid var(--line); border-radius: 6px; padding: 0 9px; background: var(--surface); color: var(--muted); }
 .log-toolbar label:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .log-toolbar input { min-width: 0; width: 100%; border: 0; outline: none; padding: 4px 0; background: transparent; color: var(--ink); }
+.log-toolbar .log-container { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.log-container select { min-width: 0; max-width: 100%; border: 0; padding: 4px 2px; background: var(--surface); color: var(--ink); font: inherit; }
+.logs-cell { text-align: right; }
+.logs-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 #stream-status { margin: 9px 0; font-size: .88rem; }
 #log {
   min-height: 180px;
@@ -215,7 +219,9 @@ tbody td, tbody th { border-top: 1px solid var(--line); }
 @media (max-width: 680px) {
   .facts { grid-template-columns: 76px minmax(0, 1fr); }
   .container-table tbody th { border: 0; padding: 0; overflow-wrap: anywhere; }
-  .container-table .uptime-cell { grid-column: 1 / -1; color: var(--muted); }
+  .container-table .uptime-cell { grid-column: 1; color: var(--muted); }
+  .container-table .logs-cell { grid-column: 2; justify-self: end; }
+  .container-table .logs-link { min-height: 44px; margin-block: -8px; }
 }
 @media (max-width: 350px) {
   .mast-inner { flex-wrap: wrap; gap: 0 10px; }

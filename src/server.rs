@@ -210,6 +210,8 @@ struct AppView {
 
 #[derive(Serialize)]
 struct ContainerView {
+    id: String,
+    name: String,
     service: String,
     state: String,
     health: Option<String>,
@@ -232,6 +234,8 @@ async fn state(State(ctx): Ctxt, user: Option<axum::Extension<User>>) -> Json<Va
     let config = ctx.config();
     let problems = ctx.problems.lock().unwrap().clone();
     let view = |c: &Container| ContainerView {
+        id: c.id.clone(),
+        name: c.name.clone(),
         service: c.service.clone(),
         state: c.state.clone(),
         health: c.health.clone(),
@@ -354,27 +358,48 @@ async fn task(State(ctx): Ctxt, Path(name): Path<String>) -> Sse<impl Stream<Ite
 
 /// The app's container logs, followed until the browser disconnects.
 async fn logs(State(ctx): Ctxt, Path(name): Path<String>, Query(query): Query<LogQuery>) -> Response {
-    let Some(cur) = ctx.state(|s| s.apps.get(&name).and_then(|a| a.current.clone())) else {
-        return (StatusCode::NOT_FOUND, "not deployed").into_response();
+    let report_end = query.details || query.container.is_some();
+    let cmd = if let Some(container) = query.container {
+        let Some(id) = docker::app_container_id(&name, &container).await else {
+            return (StatusCode::NOT_FOUND, "container not available for this app").into_response();
+        };
+        docker::docker(["logs", "--follow", "--tail", "300", "--timestamps", &id])
+    } else {
+        let Some(cur) = ctx.state(|s| s.apps.get(&name).and_then(|a| a.current.clone())) else {
+            return (StatusCode::NOT_FOUND, "not deployed").into_response();
+        };
+        let format = if query.details { "--timestamps" } else { "--no-log-prefix" };
+        compose(&name, &cur, &["logs", "-f", "--tail", "300", "--no-color", format])
     };
-    let format = if query.details { "--timestamps" } else { "--no-log-prefix" };
-    let cmd = compose(&name, &cur, &["logs", "-f", "--tail", "300", "--no-color", format]);
     let stream = async_stream::stream! {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut cmd = cmd;
-        let Ok(mut child) = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() else { return };
+        let Ok(mut child) = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() else {
+            if report_end {
+                yield Ok::<_, Infallible>(Event::default().event("log-error").data("Could not start Docker logs."));
+            }
+            return;
+        };
         docker::forward(child.stdout.take().unwrap(), tx.clone());
         docker::forward(child.stderr.take().unwrap(), tx);
         while let Some(line) = rx.recv().await {
             yield Ok::<_, Infallible>(Event::default().data(line));
         }
-        let _ = child.wait().await;
+        let success = child.wait().await.is_ok_and(|status| status.success());
+        if report_end {
+            yield Ok::<_, Infallible>(if success {
+                Event::default().event("end").data("1")
+            } else {
+                Event::default().event("log-error").data("Docker could not read or follow these logs.")
+            });
+        }
     };
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
 #[derive(Deserialize)]
 struct LogQuery {
+    container: Option<String>,
     #[serde(default)]
     details: bool,
 }
