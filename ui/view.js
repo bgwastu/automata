@@ -17,8 +17,7 @@ const age = (at) => {
 };
 const when = (at) => `<time datetime="${new Date(at).toISOString()}" title="${escape(time(at))}">${age(at)}</time>`;
 
-const github = (repo, sha) => {
-  const label = sha ? sha.slice(0, 7) : repo;
+const github = (repo, sha, label = sha ? sha.slice(0, 7) : repo) => {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || (sha && !/^[a-f0-9]+$/i.test(sha))) return `<code>${escape(label)}</code>`;
   const url = `https://github.com/${repo}${sha ? `/commit/${sha}` : ""}`;
   return `<a href="${url}" target="_blank" rel="noopener"><code>${escape(label)}</code></a>`;
@@ -59,17 +58,19 @@ export function renderHeader(view) {
   const repo = infra.repo.split("#")[0];
   const applied = infra.applied?.commit;
   const fetched = infra.commit && infra.commit !== applied;
-  updateHtml($("infra"), `${github(repo)}${fetched ? ` <span class="cell-meta fetched">Fetched ${github(repo, infra.commit)}</span>` : ""}`);
+  updateHtml($("infra"), `${github(repo)}${applied ? `<span class="commit-ref" title="Last applied commit">${github(repo, applied, "@" + applied.slice(0, 7))}</span>` : ""}`);
   const syncPending = infra.requested > infra.completed;
   const sync = infra.syncing ? { tone: "busy", label: "Syncing" } :
     syncPending ? { tone: "busy", label: "Sync queued" } :
     infra.result === false ? { tone: "bad", label: "Sync incomplete" } :
-    infra.result === true ? { tone: "good", label: "In sync" } : { tone: "muted", label: "Waiting for first sync" };
-  updateHtml($("sync-state"), `${statusHtml(sync)}${applied ? ` <span class="applied">Applied ${github(repo, applied)}</span>` : ""}`);
+    infra.result === true ? null : { tone: "muted", label: "Waiting for first sync" };
+  updateHtml($("sync-state"), sync
+    ? statusHtml(sync) + (fetched ? `<span class="muted">Fetched ${github(repo, infra.commit)}</span>` : "")
+    : "");
   const synced = $("synced");
-  synced.textContent = infra.synced_at ? `Checked ${age(infra.synced_at).toLowerCase()}` : "";
+  synced.textContent = infra.synced_at ? `${infra.result ? "Synced" : "Checked"} ${age(infra.synced_at).toLowerCase()}` : "";
   synced.title = infra.synced_at ? time(infra.synced_at) : "";
-  $("logout").hidden = !(auth.password || auth.access === "on");
+  $("logout").hidden = !auth.password;
   $("version").textContent = `Automata ${view.version}${view.latest ? ` / ${view.latest} available` : ""}`;
   const alerts = [
     infra.error && `Infra: ${infra.error}`,

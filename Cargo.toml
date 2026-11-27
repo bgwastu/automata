@@ -1,6 +1,6 @@
 [package]
 name = "automata"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 rust-version = "1.85"
 description = "Small self-hosted PaaS: Docker Compose apps, Cloudflare Tunnel routing, R2 backups"

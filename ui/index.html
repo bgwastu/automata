@@ -47,8 +47,10 @@
         </header>
         <div class="infra-strip">
           <div class="repo-line"><svg class="icon" aria-hidden="true"><use href="#i-git"/></svg><span id="infra"></span></div>
-          <span id="sync-state" class="sync-state"></span>
-          <time id="synced"></time>
+          <div class="sync-meta">
+            <span id="sync-state"></span>
+            <time id="synced"></time>
+          </div>
         </div>
         <p id="empty" class="empty" role="status">Loading apps…</p>
         <table id="app-table" class="app-table" role="table" hidden>

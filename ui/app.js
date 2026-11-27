@@ -228,9 +228,10 @@ $("snapshot-list").addEventListener("click", (event) => {
 });
 
 $("logout").addEventListener("click", async () => {
+  if (!view?.auth.password) return;
   try {
-    if (view?.auth.password && !await post("/logout")) return;
-    location.assign(view?.auth.access === "on" ? "/cdn-cgi/access/logout" : "/");
+    if (!await post("/logout")) return;
+    location.assign(view.auth.access === "on" ? "/cdn-cgi/access/logout" : "/");
   } catch (error) {
     feedback(error.message, "bad");
   }
