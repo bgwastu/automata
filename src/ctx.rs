@@ -65,6 +65,7 @@ pub struct DnsRecord {
 #[serde(default)]
 pub struct State {
     pub apps: BTreeMap<String, AppState>,
+    pub infra_applied: Option<AppliedInfra>,
     pub tunnel: Option<Tunnel>,
     /// DNS records Automata created, so it can delete the ones no longer used.
     pub dns: Vec<DnsRecord>,
@@ -72,13 +73,21 @@ pub struct State {
     pub routes: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppliedInfra {
+    pub commit: Option<String>,
+    pub at: i64,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Infra {
     pub commit: Option<String>,
-    #[serde(skip)]
-    pub dir: Option<PathBuf>,
     pub error: Option<String>,
     pub synced_at: Option<i64>,
+    pub syncing: bool,
+    pub requested: u64,
+    pub completed: u64,
+    pub result: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

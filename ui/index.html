@@ -4,65 +4,106 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>automata</title>
+    <title>Automata</title>
     <link rel="stylesheet" href="/style.css" />
     <script type="module" src="/app.js"></script>
   </head>
   <body class="dashboard">
+    <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" class="sprite" aria-hidden="true">
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
+      <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10m12-10a6 6 0 0 1-6 6H6"/></symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5m-5 0a8 8 0 0 1 13.7-5.7L20 9m0 3a8 8 0 0 1-13.7 5.7L4 15"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-warning" viewBox="0 0 24 24"><path d="M10.3 4.9 2.8 18a1.5 1.5 0 0 0 1.3 2.2h15.8a1.5 1.5 0 0 0 1.3-2.2L13.7 4.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></symbol>
+      <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm-8 4.5 8 4.5 8-4.5m-8 4.5v9"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6m0-6-9 9m7 0v6H5V6h6"/></symbol>
+      <symbol id="i-left" viewBox="0 0 24 24"><path d="M20 12H4m6-6-6 6 6 6"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 8 4 4-4 4m7 0h3"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><path d="M4 9h16v11H4zm-1-5h18v5H3zm7 9h4"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+    </svg>
     <header class="masthead">
-      <a class="brand" href="#" aria-label="Automata apps">automata</a>
-      <div class="infra">
-        <span id="infra"></span>
-        <time id="synced"></time>
-      </div>
-      <div class="system">
-        <span id="tunnel"></span>
-        <span id="system-task" class="busy"></span>
-        <button id="sync" type="button" disabled>Sync</button>
-        <details id="account" hidden>
-          <summary>Account</summary>
-          <div class="account-menu">
-            <span id="user"></span>
-            <button id="logout" type="button">Sign out</button>
-          </div>
-        </details>
+      <div class="shell mast-inner">
+        <a class="brand" href="#" aria-label="Automata apps"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg>Automata</a>
+        <nav aria-label="Main navigation"><a class="home-link" href="#">Apps</a></nav>
+        <div class="system">
+          <span id="tunnel"></span>
+          <details id="account" hidden>
+            <summary><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>Account</span></summary>
+            <div class="account-menu">
+              <span id="user"></span>
+              <button id="logout" type="button">Sign out</button>
+            </div>
+          </details>
+        </div>
       </div>
     </header>
-    <ul id="alerts" class="alerts" hidden></ul>
-    <p id="feedback" class="feedback" role="status" hidden></p>
-    <main class="layout">
-      <aside class="sidebar" aria-labelledby="apps-title">
-        <div class="list-heading">
-          <h1 id="apps-title" tabindex="-1">Apps</h1>
-          <span id="app-count"></span>
-        </div>
-        <nav aria-label="Apps"><ul id="apps" class="app-list"></ul></nav>
-        <p id="empty" class="empty" role="status">Loading apps…</p>
-        <span id="version" class="version"></span>
-      </aside>
-      <section id="workspace" class="workspace" aria-labelledby="app-name" hidden>
-        <a class="back" href="#">← Apps</a>
-        <header class="app-heading">
+    <main class="shell layout">
+      <ul id="alerts" class="alerts" hidden></ul>
+      <p id="feedback" class="feedback" role="status" hidden></p>
+      <section id="inventory" aria-labelledby="apps-title">
+        <header class="page-heading">
           <div>
-            <h2 id="app-name" tabindex="-1"></h2>
-            <span id="app-status" class="status"></span>
+            <h1 id="apps-title" tabindex="-1">Apps</h1>
+            <p id="app-summary" class="subheading"></p>
+          </div>
+          <button id="sync" class="primary" type="button" disabled><svg class="icon" aria-hidden="true"><use href="#i-sync"/></svg><span id="sync-label">Sync</span></button>
+        </header>
+        <div class="infra-strip">
+          <div class="repo-line"><svg class="icon" aria-hidden="true"><use href="#i-git"/></svg><span id="infra"></span></div>
+          <span id="sync-state" class="sync-state"></span>
+          <time id="synced"></time>
+        </div>
+        <p id="empty" class="empty" role="status">Loading apps…</p>
+        <table id="app-table" class="app-table" role="table" hidden>
+          <thead role="rowgroup"><tr role="row">
+            <th scope="col">App</th>
+            <th scope="col">Runtime</th>
+            <th scope="col">Last deploy</th>
+            <th scope="col">Routes</th>
+          </tr></thead>
+          <tbody id="apps" role="rowgroup"></tbody>
+        </table>
+      </section>
+      <section id="workspace" class="workspace" aria-labelledby="app-name" hidden>
+        <a class="back" href="#"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg>Apps</a>
+        <header class="page-heading app-heading">
+          <div>
+            <h1 id="app-name" tabindex="-1"></h1>
+            <span id="app-status" class="subheading"></span>
           </div>
           <div class="actions">
-            <button id="restart" type="button">Restart</button>
-            <button id="backup" type="button">Back up now</button>
+            <button id="restart" type="button"><svg class="icon" aria-hidden="true"><use href="#i-sync"/></svg>Restart</button>
+            <button id="backup" type="button"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg>Back up now</button>
           </div>
         </header>
-        <p id="app-error" class="app-error" hidden></p>
+        <section id="app-error" class="incident" aria-labelledby="incident-title" hidden>
+          <strong id="incident-title"></strong>
+          <p id="incident-detail"></p>
+          <a id="incident-output"><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>View deploy output</a>
+        </section>
         <nav class="tabs" aria-label="App views">
-          <a data-view="overview">Overview</a>
-          <a data-view="logs">Logs</a>
-          <a data-view="task">Last task</a>
-          <a data-view="backups">Backups</a>
+          <a data-view="overview"><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg>Overview</a>
+          <a data-view="logs"><svg class="icon" aria-hidden="true"><use href="#i-terminal"/></svg>Logs</a>
+          <a data-view="task"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Last task</a>
+          <a data-view="backups"><svg class="icon" aria-hidden="true"><use href="#i-archive"/></svg>Backups</a>
         </nav>
         <div id="overview" class="overview" hidden></div>
         <section id="output" class="output" aria-label="Live output" hidden>
+          <div class="log-toolbar">
+            <label><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="log-search" type="search" placeholder="Search output" aria-label="Search output" /></label>
+            <button id="log-pause" type="button"></button>
+            <button id="log-copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
+          </div>
           <p id="stream-status" class="muted" role="status"></p>
-          <pre id="log" tabindex="0" aria-label="Output" hidden></pre>
+          <div id="log" tabindex="0" aria-label="Output" hidden></div>
         </section>
         <section id="snapshots" class="snapshots" aria-label="Backups" hidden>
           <p id="backup-summary" class="muted"></p>
@@ -71,5 +112,6 @@
       </section>
       <p id="unavailable" class="unavailable" tabindex="-1" hidden></p>
     </main>
+    <footer class="shell footer"><span id="version"></span></footer>
   </body>
 </html>

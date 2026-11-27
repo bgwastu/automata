@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use crate::config::{self, App, Config};
-use crate::ctx::{Ctx, now_ms};
+use crate::ctx::{AppliedInfra, Ctx, now_ms};
 use crate::deploy::{self, Target};
 use crate::docker::{self, docker};
 use crate::sched::Job;
@@ -20,7 +20,37 @@ const INTERVAL: Duration = Duration::from_secs(30);
 
 pub async fn run(ctx: Arc<Ctx>) {
     loop {
-        once(&ctx).await;
+        let (request, retry) = {
+            let mut infra = ctx.infra.lock().unwrap();
+            infra.syncing = true;
+            (infra.requested, infra.requested > infra.completed)
+        };
+        ctx.changed();
+        if retry {
+            ctx.state(|s| s.apps.values_mut().for_each(|a| a.failed = None));
+        }
+        let applied = once(&ctx).await;
+        let at = now_ms();
+        let commit = ctx.infra.lock().unwrap().commit.clone();
+        let changed = applied
+            && ctx.state(|s| {
+                if s.infra_applied.as_ref().is_some_and(|a| a.commit == commit) {
+                    return false;
+                }
+                s.infra_applied = Some(AppliedInfra { commit, at });
+                true
+            });
+        if changed {
+            ctx.save().await;
+        }
+        {
+            let mut infra = ctx.infra.lock().unwrap();
+            infra.syncing = false;
+            infra.result = Some(applied);
+            infra.completed = request;
+            infra.synced_at = Some(at);
+        }
+        ctx.changed();
         tokio::select! {
             _ = ctx.wake.notified() => {}
             _ = tokio::time::sleep(INTERVAL) => {}
@@ -28,43 +58,52 @@ pub async fn run(ctx: Arc<Ctx>) {
     }
 }
 
-async fn once(ctx: &Ctx) {
+async fn once(ctx: &Ctx) -> bool {
     let previous = ctx.config();
+    let mut applied = true;
     let config = match sync_infra(ctx).await {
-        Ok(dir) => match config::load(&dir) {
+        Ok((dir, commit)) => match config::load(&dir) {
             Ok(c) => {
                 let c = Arc::new(c);
                 *ctx.config.write().unwrap() = Some(c.clone());
-                ctx.infra.lock().unwrap().error = None;
+                let mut infra = ctx.infra.lock().unwrap();
+                infra.error = None;
+                infra.commit = commit;
                 Some(c)
             }
             Err(e) => {
+                applied = false;
                 ctx.infra.lock().unwrap().error = Some(format!("{e:#}"));
                 previous.clone()
             }
         },
         Err(e) => {
+            applied = false;
             ctx.infra.lock().unwrap().error = Some(format!("{e:#}"));
             previous.clone()
         }
     };
-    ctx.infra.lock().unwrap().synced_at = Some(now_ms());
-    ctx.changed();
-    let Some(config) = config else { return };
+    let Some(config) = config else { return false };
 
     let gateway = match docker::ensure_network(NETWORK).await {
         Ok(g) => g,
         Err(e) => {
             ctx.infra.lock().unwrap().error = Some(format!("docker network: {e:#}"));
-            return;
+            return false;
         }
     };
+    let routes = routes(ctx, &config, previous.as_deref());
     let tunnel = async {
+        if routes.is_empty() && ctx.state(|s| s.tunnel.is_none()) {
+            return Ok(());
+        }
         let api = tunnel::Api::new(ctx, &config)?;
         tunnel::ensure(ctx, &api, &config, &gateway).await?;
-        tunnel::sync(ctx, &api, &routes(ctx, &config, previous.as_deref())).await
+        tunnel::sync(ctx, &api, &routes).await
     };
-    *ctx.tunnel_error.lock().unwrap() = tunnel.await.err().map(|e| format!("{e:#}"));
+    let tunnel_error = tunnel.await.err().map(|e| format!("{e:#}"));
+    applied &= tunnel_error.is_none() && config.invalid.is_empty();
+    *ctx.tunnel_error.lock().unwrap() = tunnel_error;
     crate::access::refresh(ctx, &config).await;
     ctx.scheduler.set(jobs(&config));
     ctx.changed();
@@ -76,15 +115,21 @@ async fn once(ctx: &Ctx) {
                 t
             }
             Err(e) => {
+                applied = false;
                 ctx.problems.lock().unwrap().insert(app.name.clone(), format!("{e:#}"));
                 continue;
             }
         };
         let (rev, failed) = ctx.app(&app.name, |s| (s.current.as_ref().map(|c| c.rev.clone()), s.failed.clone()));
-        if rev.as_ref() == Some(&target.rev) || failed.as_ref() == Some(&target.rev) || ctx.busy(&app.name).is_some() {
+        if rev.as_ref() == Some(&target.rev) {
+            continue;
+        }
+        if failed.as_ref() == Some(&target.rev) || ctx.busy(&app.name).is_some() {
+            applied = false;
             continue;
         }
         ctx.queue(&app.name, "deploy", deploy::deploy(ctx, app, &target)).await;
+        applied &= ctx.app(&app.name, |s| s.current.as_ref().is_some_and(|r| r.rev == target.rev));
     }
 
     // Apps whose folder is gone. An app that failed to load keeps running as it was.
@@ -97,16 +142,18 @@ async fn once(ctx: &Ctx) {
     });
     for name in gone {
         if let Err(e) = ctx.queue(&name, "remove", deploy::remove(ctx, &name)).await {
+            applied = false;
             tracing::error!("removing {name}: {e:#}");
         }
     }
+    applied
 }
 
 /// Fetch the infra repo, or use it in place when it is a local folder.
-async fn sync_infra(ctx: &Ctx) -> Result<PathBuf> {
+async fn sync_infra(ctx: &Ctx) -> Result<(PathBuf, Option<String>)> {
     let spec = &ctx.env.infra;
     if spec.starts_with('/') || spec.starts_with('.') {
-        return Ok(PathBuf::from(spec));
+        return Ok((PathBuf::from(spec), None));
     }
     let (repo, branch) = spec.split_once('#').unwrap_or((spec, "main"));
     let commit = git::head(ctx, repo, branch).await?;
@@ -123,10 +170,7 @@ async fn sync_infra(ctx: &Ctx) -> Result<PathBuf> {
             }
         }
     }
-    let mut infra = ctx.infra.lock().unwrap();
-    infra.commit = Some(commit);
-    infra.dir = Some(dir.clone());
-    Ok(dir)
+    Ok((dir, Some(commit)))
 }
 
 /// What should be running: the infra folder's hash, plus the source commit when the app has one.

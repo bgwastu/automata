@@ -3,8 +3,17 @@ const escape = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[char]
 ));
 
+export const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 export const time = (ms) => new Date(ms).toLocaleString();
 export const appLink = (name, view = "overview") => `#${new URLSearchParams({ app: name, ...(view !== "overview" && { view }) })}`;
+const age = (at) => {
+  const minutes = Math.max(0, Math.floor((Date.now() - at) / 60_000));
+  if (!minutes) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
+  return `${Math.floor(minutes / 1440)}d ago`;
+};
+const when = (at) => `<time datetime="${new Date(at).toISOString()}" title="${escape(time(at))}">${age(at)}</time>`;
 
 const github = (repo, sha) => {
   const label = sha ? sha.slice(0, 7) : repo;
@@ -16,19 +25,19 @@ const github = (repo, sha) => {
 const failing = (container) => container.health === "unhealthy" || container.state === "restarting" ||
   (container.state === "exited" && !container.status.startsWith("Exited (0)"));
 
-export function status(app) {
+export function status(app, runtimeError) {
+  if (runtimeError) return { tone: "muted", label: "Runtime unknown" };
   const problem = app.containers.find(failing);
   const running = app.containers.filter((container) => container.state === "running").length;
-  if (app.failed) return { tone: "bad", label: app.rev ? "Last deploy failed" : "Deploy failed", running };
-  if (problem) return { tone: "bad", label: `${problem.service} ${problem.health === "unhealthy" ? "unhealthy" : problem.state}`, running };
-  if (app.busy) return { tone: "busy", label: app.busy, running };
-  if (app.error) return { tone: "bad", label: "Needs attention", running };
-  if (!app.rev) return { tone: "muted", label: "Not deployed", running };
-  if (app.containers.some((container) => container.health === "starting")) return { tone: "busy", label: "Starting", running };
-  if (!running) return { tone: "bad", label: "Stopped", running };
-  if (running < app.containers.length) return { tone: "busy", label: "Partially running", running };
-  return { tone: "good", label: "Running", running };
+  const total = app.containers.length;
+  if (problem) return { tone: "bad", label: `${problem.service} ${problem.health === "unhealthy" ? "unhealthy" : problem.state}` };
+  if (app.containers.some((container) => container.health === "starting")) return { tone: "busy", label: "Starting" };
+  if (running) return { tone: running === total ? "good" : "busy", label: `${running}/${total} running` };
+  return app.rev ? { tone: "bad", label: "Stopped" } : { tone: "muted", label: "Not deployed" };
 }
+
+export const statusHtml = ({ tone, label }) =>
+  `<span class="status ${tone}">${icon({ good: "check", bad: "warning", busy: "clock", muted: "minus" }[tone])}${escape(label)}</span>`;
 
 const markup = new WeakMap();
 function updateHtml(node, html) {
@@ -46,16 +55,26 @@ function updateHtml(node, html) {
 export function renderHeader(view) {
   const { infra, auth } = view;
   const repo = infra.repo.split("#")[0];
-  updateHtml($("infra"), `${github(repo)}${infra.commit ? github(repo, infra.commit) : ""}`);
-  $("synced").textContent = infra.synced_at ? `Synced ${time(infra.synced_at)}` : "";
-  $("tunnel").textContent = view.tunnel_error ? "Tunnel error" : view.domain ? "Tunnel up" : "";
-  $("tunnel").className = view.tunnel_error ? "bad" : "good";
-  $("system-task").textContent = view.busy || "";
+  const applied = infra.applied?.commit;
+  const fetched = infra.commit && infra.commit !== applied;
+  updateHtml($("infra"), `${github(repo)}${fetched ? ` <span class="cell-meta fetched">Fetched ${github(repo, infra.commit)}</span>` : ""}`);
+  const syncPending = infra.requested > infra.completed;
+  const sync = infra.syncing ? { tone: "busy", label: "Syncing" } :
+    syncPending ? { tone: "busy", label: "Sync queued" } :
+    infra.result === false ? { tone: "bad", label: "Sync incomplete" } :
+    infra.result === true ? { tone: "good", label: "In sync" } : { tone: "muted", label: "Waiting for first sync" };
+  updateHtml($("sync-state"), `${statusHtml(sync)}${applied ? ` <span class="applied">Applied ${github(repo, applied)}</span>` : ""}`);
+  const synced = $("synced");
+  synced.textContent = infra.synced_at ? `Checked ${age(infra.synced_at).toLowerCase()}` : "";
+  synced.title = infra.synced_at ? time(infra.synced_at) : "";
+  updateHtml($("tunnel"), view.tunnel_error ? statusHtml({ tone: "bad", label: "Tunnel error" }) :
+    view.domain ? statusHtml({ tone: "good", label: "Tunnel configured" }) : "");
   $("user").textContent = auth.user || "";
   $("account").hidden = !(auth.password || auth.access === "on");
-  $("version").textContent = `v${view.version}${view.latest ? ` / ${view.latest} available` : ""}`;
+  $("version").textContent = `Automata ${view.version}${view.latest ? ` / ${view.latest} available` : ""}`;
   const alerts = [
     infra.error && `Infra: ${infra.error}`,
+    view.runtime_error && `Runtime status unavailable: ${view.runtime_error}`,
     view.tunnel_error && `Tunnel: ${view.tunnel_error}`,
     view.self_error && `Self-update: ${view.self_error}`,
     auth.access === "failed" && `Cloudflare Access: ${auth.access_error}`,
@@ -66,67 +85,89 @@ export function renderHeader(view) {
   updateHtml($("alerts"), alerts.map((message) => `<li>${escape(message)}</li>`).join(""));
 }
 
-export function renderApps(apps, selected) {
+const routeLink = (url) => url.startsWith("*.") ? escape(url) :
+  `<a class="route-link" href="https://${escape(url)}" target="_blank" rel="noopener"><span>${escape(url)}</span>${icon("external")}</a>`;
+const routesList = (urls) => `<ul class="routes">${urls.map((url) => `<li>${routeLink(url)}</li>`).join("")}</ul>`;
+const routesCell = ([first, ...rest]) => first
+  ? routeLink(first) + (rest.length ? `<details class="route-details"><summary>${rest.length} more ${rest.length === 1 ? "route" : "routes"}</summary>${routesList(rest)}</details>` : "")
+  : '<span class="muted">No routes</span>';
+
+function deployCell(app, repo) {
+  const link = appLink(app.name, "task");
+  const last = app.commit || app.infra_commit;
+  const deployed = last ? github(app.commit ? app.source?.split(/[#@]/)[0] || "" : repo, last) : "";
+  const at = app.deployed_at ? when(app.deployed_at) : "";
+  const successful = [deployed, at].filter(Boolean).join(" ");
+  if (app.busy?.startsWith("deploy")) {
+    return statusHtml({ tone: "busy", label: app.busy.endsWith("queued") ? "Deploy queued" : "Deploying" }) +
+      (successful ? `<span class="cell-meta">Last success ${successful}</span>` : "");
+  }
+  if (app.failed || app.error) {
+    const label = app.failed ? "Deploy failed" : "Needs attention";
+    return `<a class="status bad" href="${app.failed ? link : appLink(app.name)}">${icon("warning")}${label}</a>` +
+      (successful ? `<span class="cell-meta">Last success ${successful}</span>` : "");
+  }
+  if (!app.rev) return '<span class="muted">No deploy yet</span>';
+  return `<span class="deploy-ok">${icon("check")}<span>${deployed || at || "Deployed"}${deployed && at ? `<span class="cell-meta">${at}</span>` : ""}</span></span>`;
+}
+
+export function renderApps(apps, view) {
   const list = $("apps");
   const existing = new Map([...list.children].map((row) => [row.dataset.name, row]));
   const focus = document.activeElement;
+  const repo = view.infra.repo.split("#")[0];
+  let attention = 0;
   apps.forEach((app, index) => {
     let row = existing.get(app.name);
     if (!row) {
-      row = document.createElement("li");
+      row = document.createElement("tr");
       row.dataset.name = app.name;
-      row.innerHTML = '<a><strong></strong><span class="meta"><span></span><span class="muted"></span></span></a>';
-      row.firstElementChild.href = appLink(app.name);
+      row.setAttribute("role", "row");
+      row.innerHTML = '<th scope="row" role="rowheader"></th><td role="cell"></td><td role="cell"></td><td role="cell" class="route-cell"></td>';
+      updateHtml(row.cells[0], `<a class="app-link" href="${appLink(app.name)}">${icon("box")}<span>${escape(app.name)}</span></a>`);
     }
     existing.delete(app.name);
-    const link = row.firstElementChild;
-    const { tone, label, running } = status(app);
-    link.firstElementChild.textContent = app.name;
-    const [state, counts] = link.lastElementChild.children;
-    state.className = tone;
-    state.textContent = label;
-    counts.textContent = app.containers.length ? `${running}/${app.containers.length} containers` : "";
-    if (app.name === selected) link.setAttribute("aria-current", "true");
-    else link.removeAttribute("aria-current");
+    const runtime = status(app, view.runtime_error);
+    if (runtime.tone === "bad" || app.failed || app.error) attention += 1;
+    updateHtml(row.cells[1], statusHtml(runtime));
+    updateHtml(row.cells[2], deployCell(app, repo));
+    updateHtml(row.cells[3], routesCell(app.urls));
     if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
   });
   for (const row of existing.values()) row.remove();
   if (list.contains(focus) && document.activeElement !== focus) focus.focus({ preventScroll: true });
-  $("app-count").textContent = apps.length ? String(apps.length) : "";
-  $("empty").hidden = apps.length > 0;
+  $("app-summary").textContent = apps.length ? `${apps.length} configured${attention ? `, ${attention} need${attention === 1 ? "s" : ""} attention` : ""}` : "";
+  $("app-table").hidden = !apps.length;
+  $("empty").hidden = !!apps.length;
   $("empty").textContent = "No apps yet. Add an app under apps/ in the infra repository.";
 }
 
 function containerRow(container) {
   const { service, health, state, image, status } = container;
-  const cls = failing(container) ? "bad" : health === "starting" ? "busy" : state === "running" ? "good" : "muted";
-  return `<tr><td>${escape(service)}</td><td class="${cls}">${escape(health || state)}</td>
-    <td><code>${escape(image)}</code></td><td>${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</td></tr>`;
+  const tone = failing(container) ? "bad" : health === "starting" ? "busy" : state === "running" ? "good" : "muted";
+  return `<tr role="row"><th role="rowheader" scope="row">${escape(service)}</th><td role="cell">${statusHtml({ tone, label: health || state })}</td>
+    <td role="cell" class="image-cell"><code>${escape(image)}</code></td><td role="cell" class="uptime-cell">${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</td></tr>`;
 }
 
-export function renderOverview(app, infra) {
-  const urls = app.urls.map((url) => {
-    // Wildcard routes have no canonical host to visit.
-    if (url.startsWith("*.")) return `<li>${escape(url)}</li>`;
-    return `<li><a href="https://${escape(url)}" target="_blank" rel="noopener">${escape(url)}</a></li>`;
-  });
+export function renderOverview(app, view) {
   const sourceRepo = app.source?.split(/[#@]/)[0];
   const release = [
     sourceRepo && app.commit && `<span>Source ${github(sourceRepo, app.commit)}</span>`,
-    app.infra_commit && `<span>Infra ${github(infra.repo.split("#")[0], app.infra_commit)}</span>`,
+    app.infra_commit && `<span>Infra ${github(view.infra.repo.split("#")[0], app.infra_commit)}</span>`,
     app.rev && !app.infra_commit && !app.commit && `<span>Revision <code>${escape(app.rev)}</code></span>`,
     app.deployed_at && `<time>${escape(time(app.deployed_at))}</time>`,
   ].filter(Boolean);
   const source = app.image ? `<code>${escape(app.image)}</code>` : app.source ? github(sourceRepo) : "Infra repository";
   const imageCheck = app.images && `<dt>Image check</dt><dd class="${app.images.ok ? "" : "bad"}">${escape(app.images.message || (app.images.ok ? "Completed" : "Failed"))}</dd>`;
-  updateHtml($("overview"), `<h3>Deployment</h3><dl class="facts">
-    <dt>Routes</dt><dd>${urls.length ? `<ul class="routes">${urls.join("")}</ul>` : '<span class="muted">No public routes</span>'}</dd>
-    <dt>${app.image ? "Image" : "Source"}</dt><dd>${source}</dd>
-    <dt>Release</dt><dd class="release">${release.join("") || '<span class="muted">Not deployed</span>'}</dd>
+  updateHtml($("overview"), `<h2>Deployment</h2><dl class="facts">
+    <dt>Routes</dt><dd>${app.urls.length ? routesList(app.urls) : '<span class="muted">No routes configured</span>'}</dd>
+    <dt>${app.image ? "Configured image" : "Source"}</dt><dd>${source}</dd>
+    <dt>Deployed release</dt><dd class="release">${release.join("") || '<span class="muted">Not deployed</span>'}</dd>
     ${imageCheck || ""}
-  </dl><h3>Containers</h3>${app.containers.length ? `<div class="table-scroll">
-    <table><thead><tr><th>Service</th><th>Health</th><th>Image</th><th>Status</th></tr></thead>
-    <tbody>${app.containers.map(containerRow).join("")}</tbody></table></div>` : '<p class="muted">No containers.</p>'}`);
+  </dl><h2>Containers</h2>${app.containers.length ? `<div class="table-scroll">
+    <table class="container-table" role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Service</th><th scope="col">Health</th><th scope="col">Image</th><th scope="col">Status</th></tr></thead>
+    <tbody role="rowgroup">${app.containers.map(containerRow).join("")}</tbody></table></div>` :
+    `<p class="muted">${view.runtime_error ? "Container status is unavailable." : "No containers."}</p>`}`);
 }
 
 export function renderSnapshots(list) {

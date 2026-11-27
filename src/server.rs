@@ -29,6 +29,7 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/style.css", get(|| async { asset("text/css", include_str!("../ui/style.css")) }))
         .route("/app.js", get(|| async { asset("text/javascript", include_str!("../ui/app.js")) }))
         .route("/api/dashboard/view.js", get(|| async { asset("text/javascript", include_str!("../ui/view.js")) }))
+        .route("/api/dashboard/logs.js", get(|| async { asset("text/javascript", include_str!("../ui/logs.js")) }))
         .route("/api/state", get(state))
         .route("/api/events", get(events))
         .route("/api/sync", post(sync))
@@ -224,7 +225,10 @@ struct BackupView {
 }
 
 async fn state(State(ctx): Ctxt, user: Option<axum::Extension<User>>) -> Json<Value> {
-    let containers = docker::containers().await.unwrap_or_default();
+    let (containers, runtime_error) = match docker::containers().await {
+        Ok(containers) => (containers, None),
+        Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+    };
     let config = ctx.config();
     let problems = ctx.problems.lock().unwrap().clone();
     let view = |c: &Container| ContainerView {
@@ -272,12 +276,18 @@ async fn state(State(ctx): Ctxt, user: Option<axum::Extension<User>>) -> Json<Va
     let invalid: Vec<Value> =
         config.iter().flat_map(|c| &c.invalid).map(|(name, error)| json!({ "name": name, "error": error })).collect();
     let infra = ctx.infra.lock().unwrap().clone();
+    let applied = ctx.state(|s| s.infra_applied.clone());
     let me = ctx.self_status.lock().unwrap().clone();
     Json(json!({
         "version": me.version,
         "latest": me.latest,
         "self_error": me.error,
-        "infra": { "repo": ctx.env.infra, "commit": infra.commit, "error": infra.error, "synced_at": infra.synced_at },
+        "infra": {
+            "repo": ctx.env.infra, "commit": infra.commit, "error": infra.error, "synced_at": infra.synced_at,
+            "syncing": infra.syncing, "requested": infra.requested, "completed": infra.completed,
+            "result": infra.result, "applied": applied,
+        },
+        "runtime_error": runtime_error,
         "domain": config.as_ref().and_then(|c| c.domain.clone()),
         "auth": {
             "password": config.as_ref().is_some_and(|c| c.secrets.password.is_some()),
@@ -312,11 +322,15 @@ async fn events(State(ctx): Ctxt) -> Sse<impl Stream<Item = Result<Event, Infall
 }
 
 /// Pull now, and retry deploys that failed.
-async fn sync(State(ctx): Ctxt) -> StatusCode {
-    ctx.state(|s| s.apps.values_mut().for_each(|a| a.failed = None));
-    ctx.save().await;
+async fn sync(State(ctx): Ctxt) -> (StatusCode, Json<Value>) {
+    let request = {
+        let mut infra = ctx.infra.lock().unwrap();
+        infra.requested += 1;
+        infra.requested
+    };
     ctx.reconcile();
-    StatusCode::ACCEPTED
+    ctx.changed();
+    (StatusCode::ACCEPTED, Json(json!({ "request": request })))
 }
 
 /// Output of the app's last or current task, then new lines as they come.
@@ -339,11 +353,12 @@ async fn task(State(ctx): Ctxt, Path(name): Path<String>) -> Sse<impl Stream<Ite
 }
 
 /// The app's container logs, followed until the browser disconnects.
-async fn logs(State(ctx): Ctxt, Path(name): Path<String>) -> Response {
+async fn logs(State(ctx): Ctxt, Path(name): Path<String>, Query(query): Query<LogQuery>) -> Response {
     let Some(cur) = ctx.state(|s| s.apps.get(&name).and_then(|a| a.current.clone())) else {
         return (StatusCode::NOT_FOUND, "not deployed").into_response();
     };
-    let cmd = compose(&name, &cur, &["logs", "-f", "--tail", "300", "--no-color", "--no-log-prefix"]);
+    let format = if query.details { "--timestamps" } else { "--no-log-prefix" };
+    let cmd = compose(&name, &cur, &["logs", "-f", "--tail", "300", "--no-color", format]);
     let stream = async_stream::stream! {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
         let mut cmd = cmd;
@@ -356,6 +371,12 @@ async fn logs(State(ctx): Ctxt, Path(name): Path<String>) -> Response {
         let _ = child.wait().await;
     };
     Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+#[derive(Deserialize)]
+struct LogQuery {
+    #[serde(default)]
+    details: bool,
 }
 
 async fn snapshots(State(ctx): Ctxt, Path(name): Path<String>) -> Response {
