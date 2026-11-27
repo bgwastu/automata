@@ -5,23 +5,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{Path, Query, Request, State};
-use axum::http::{StatusCode, header};
+use axum::extract::{Form, Path, Query, Request, State};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::{IntoResponse, Json, Redirect, Response};
 use axum::routing::{get, post};
-use base64::Engine;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use subtle::ConstantTimeEq;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::backup;
 use crate::ctx::{Ctx, LogEvent, Outcome};
 use crate::deploy::{self, compose};
 use crate::docker::{self, Container};
+use crate::{access, backup, session};
 
 type Ctxt = State<Arc<Ctx>>;
 
@@ -37,7 +35,11 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/api/apps/{name}/logs", get(logs))
         .route("/api/apps/{name}/snapshots", get(snapshots))
         .route("/api/apps/{name}/{action}", post(action))
+        .route("/login", get(login_page).post(login))
+        .route("/logout", post(logout))
         .layer(middleware::from_fn_with_state(ctx.clone(), auth))
+        // Outside auth: app paths are public, like the apps' own domains.
+        .layer(middleware::from_fn_with_state(ctx.clone(), crate::proxy::layer))
         .with_state(ctx)
 }
 
@@ -45,39 +47,156 @@ fn asset(kind: &'static str, body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "no-cache")], body).into_response()
 }
 
-/// Basic auth when the root .env sets PASSWORD. Writes also need a header a cross-site form cannot send.
-async fn auth(State(ctx): Ctxt, req: Request, next: Next) -> Response {
-    // Until the infra repo is read there is no way to know whether a password is required.
+/// Pages that open without signing in: the login form needs its stylesheet.
+/// Who is signed in, from the Cloudflare Access token. `None` without Access.
+#[derive(Clone)]
+struct User(Option<String>);
+
+/// Two independent locks, either or both of which may be on:
+///
+/// - Cloudflare Access, when an Access application covers the domain. Every request needs a token
+///   Access signed for it, checked here because Access itself only guards `/`.
+/// - DASHBOARD_PASSWORD in the root `encrypted_env`. Everything but the login page needs a
+///   session cookie.
+///
+/// With neither, the dashboard is open, and it says so. Writes also need a header a cross-site
+/// form cannot send.
+async fn auth(State(ctx): Ctxt, mut req: Request, next: Next) -> Response {
+    // Until the infra repo is read there is no way to know what is required.
     let Some(config) = ctx.config() else {
         return (StatusCode::SERVICE_UNAVAILABLE, "starting, the infra repo is not loaded yet").into_response();
     };
-    if let Some(password) = &config.secrets.password {
-        let given = req
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok()?.strip_prefix("Basic "))
-            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
-            .and_then(|b| String::from_utf8(b).ok())
-            .and_then(|s| s.split_once(':').map(|(_, p)| p.to_string()))
-            .unwrap_or_default();
-        if !bool::from(given.as_bytes().ct_eq(password.as_bytes())) {
-            return (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Basic realm=\"automata\"")])
-                .into_response();
-        }
+    let path = req.uri().path();
+    if path == "/style.css" {
+        return next.run(req).await;
     }
-    if req.method() == axum::http::Method::POST && !req.headers().contains_key("x-automata") {
+    let api = path.starts_with("/api/") || req.method() != Method::GET;
+    let password = config.secrets.password.as_deref();
+    let user = match ctx.access.mode() {
+        access::Mode::On { team, aud } => {
+            let Some(token) = access::token(req.headers()) else {
+                return denied(
+                    api,
+                    "This request did not come through Cloudflare Access. Open the dashboard at its domain to sign in.",
+                );
+            };
+            match access::verify(&ctx, &team, &aud, token).await {
+                Ok(user) => Some(user),
+                Err(e) => {
+                    tracing::warn!("cloudflare access token from {} rejected: {e:#}", session::client(req.headers()));
+                    return denied(
+                        api,
+                        &format!(
+                            "Cloudflare Access did not sign you in for this dashboard ({e}). Open the dashboard again to sign in."
+                        ),
+                    );
+                }
+            }
+        }
+        // Without a password, Access is the only lock, so a failed lookup must not open the door.
+        access::Mode::Unknown | access::Mode::Failed(_) if password.is_none() => {
+            let why = match ctx.access.mode() {
+                access::Mode::Failed(e) => {
+                    format!("Could not check whether Cloudflare Access protects the dashboard: {e}")
+                }
+                _ => "Checking whether Cloudflare Access protects the dashboard. Try again in a few seconds.".into(),
+            };
+            return page(StatusCode::SERVICE_UNAVAILABLE, api, "Not available", &why);
+        }
+        _ => None,
+    };
+    if let Some(password) = password
+        && path != "/login"
+        && !session::signed_in(req.headers(), password)
+    {
+        if api {
+            return (StatusCode::UNAUTHORIZED, "sign in first").into_response();
+        }
+        return Redirect::to("/login").into_response();
+    }
+    if req.method() == Method::POST && path != "/login" && !req.headers().contains_key("x-automata") {
         return StatusCode::FORBIDDEN.into_response();
     }
+    req.extensions_mut().insert(User(user));
     next.run(req).await
+}
+
+fn denied(api: bool, why: &str) -> Response {
+    if api {
+        return (StatusCode::UNAUTHORIZED, why.to_string()).into_response();
+    }
+    page(StatusCode::FORBIDDEN, false, "Not signed in", why)
+}
+
+/// A short page explaining why the dashboard is not shown, or plain text for API calls.
+fn page(status: StatusCode, api: bool, title: &str, why: &str) -> Response {
+    if api {
+        return (status, why.to_string()).into_response();
+    }
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let page =
+        include_str!("../ui/notice.html").replace("<!--title-->", &esc(title)).replace("<!--message-->", &esc(why));
+    (status, [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], page)
+        .into_response()
+}
+
+fn login_html(status: StatusCode, message: &str) -> Response {
+    let message = if message.is_empty() { String::new() } else { format!("<p class=\"bad\">{message}</p>") };
+    let page = include_str!("../ui/login.html").replace("<!--message-->", &message);
+    (status, [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], page)
+        .into_response()
+}
+
+async fn login_page(State(ctx): Ctxt, headers: HeaderMap) -> Response {
+    match ctx.config().and_then(|c| c.secrets.password.clone()) {
+        Some(p) if !session::signed_in(&headers, &p) => login_html(StatusCode::OK, ""),
+        _ => Redirect::to("/").into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    password: String,
+}
+
+async fn login(State(ctx): Ctxt, headers: HeaderMap, Form(form): Form<LoginForm>) -> Response {
+    let Some(password) = ctx.config().and_then(|c| c.secrets.password.clone()) else {
+        return Redirect::to("/").into_response();
+    };
+    let client = session::client(&headers);
+    if let Some(wait) = session::locked(&client) {
+        let minutes = wait.as_secs().div_ceil(60);
+        let message =
+            format!("Too many wrong passwords. Try again in {minutes} minute{}.", if minutes == 1 { "" } else { "s" });
+        return login_html(StatusCode::TOO_MANY_REQUESTS, &message);
+    }
+    if !session::password_matches(&form.password, &password) {
+        session::failed(&client);
+        tracing::warn!("wrong dashboard password from {client}");
+        // Slows down guessing without making the owner wait long.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        return login_html(StatusCode::UNAUTHORIZED, "Wrong password.");
+    }
+    session::succeeded(&client);
+    let cookie = session::set_cookie(&headers, Some(&session::issue(&password)));
+    ([(header::SET_COOKIE, cookie)], Redirect::to("/")).into_response()
+}
+
+async fn logout(headers: HeaderMap) -> Response {
+    ([(header::SET_COOKIE, session::set_cookie(&headers, None))], StatusCode::NO_CONTENT).into_response()
 }
 
 #[derive(Serialize)]
 struct AppView {
     name: String,
     source: Option<String>,
-    domains: Vec<String>,
+    /// Where the app is reachable, without the scheme.
+    urls: Vec<String>,
     rev: Option<String>,
     commit: Option<String>,
+    /// Infra repo commit the running release came from.
+    infra_commit: Option<String>,
+    image: Option<String>,
     deployed_at: Option<i64>,
     failed: Option<String>,
     error: Option<String>,
@@ -93,6 +212,7 @@ struct ContainerView {
     state: String,
     health: Option<String>,
     status: String,
+    image: String,
 }
 
 #[derive(Serialize)]
@@ -102,7 +222,7 @@ struct BackupView {
     last: Option<Outcome>,
 }
 
-async fn state(State(ctx): Ctxt) -> Json<Value> {
+async fn state(State(ctx): Ctxt, user: Option<axum::Extension<User>>) -> Json<Value> {
     let containers = docker::containers().await.unwrap_or_default();
     let config = ctx.config();
     let problems = ctx.problems.lock().unwrap().clone();
@@ -111,6 +231,7 @@ async fn state(State(ctx): Ctxt) -> Json<Value> {
         state: c.state.clone(),
         health: c.health.clone(),
         status: c.status.clone(),
+        image: c.image.clone(),
     };
     let mut apps: Vec<AppView> = vec![];
     for app in config.iter().flat_map(|c| &c.apps) {
@@ -122,9 +243,18 @@ async fn state(State(ctx): Ctxt) -> Json<Value> {
         apps.push(AppView {
             name: app.name.clone(),
             source,
-            domains: app.domains.clone(),
+            urls: config
+                .as_ref()
+                .and_then(|c| c.domain.as_ref())
+                .zip(app.path.as_ref())
+                .map(|(d, p)| format!("{d}{p}"))
+                .into_iter()
+                .chain(app.domains.iter().cloned())
+                .collect(),
             rev: s.current.as_ref().map(|c| c.rev.clone()),
             commit: s.current.as_ref().and_then(|c| c.commit.clone()),
+            infra_commit: s.current.as_ref().and_then(|c| c.infra.clone()),
+            image: app.image.clone(),
             deployed_at: s.current.as_ref().map(|c| c.at),
             failed: s.failed,
             error: problems.get(&app.name).cloned().or(s.error),
@@ -147,9 +277,20 @@ async fn state(State(ctx): Ctxt) -> Json<Value> {
         "latest": me.latest,
         "self_error": me.error,
         "infra": { "repo": ctx.env.infra, "commit": infra.commit, "error": infra.error, "synced_at": infra.synced_at },
-        "dashboard": config.as_ref().and_then(|c| c.dashboard.clone()),
+        "domain": config.as_ref().and_then(|c| c.domain.clone()),
+        "auth": {
+            "password": config.as_ref().is_some_and(|c| c.secrets.password.is_some()),
+            "access": match ctx.access.mode() {
+                access::Mode::On { .. } => "on",
+                access::Mode::Off => "off",
+                access::Mode::Unknown => "checking",
+                access::Mode::Failed(_) => "failed",
+            },
+            "access_error": match ctx.access.mode() { access::Mode::Failed(e) => Some(e), _ => None },
+            "user": user.and_then(|u| u.0.0.clone()),
+        },
         "tunnel_error": ctx.tunnel_error.lock().unwrap().clone(),
-        "busy": ctx.busy("automata").or_else(|| ctx.busy("restic")),
+        "busy": ctx.busy("automata"),
         "apps": apps,
         "invalid": invalid,
     }))

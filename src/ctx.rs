@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,9 @@ use crate::sched::Scheduler;
 pub struct Release {
     pub rev: String,
     pub commit: Option<String>,
+    /// Infra repo commit the release was deployed from.
+    #[serde(default)]
+    pub infra: Option<String>,
     /// Build folder with the source, `override.json` and `secrets.json`.
     pub dir: PathBuf,
     pub compose: PathBuf,
@@ -107,6 +111,7 @@ pub struct Ctx {
     /// S3 credentials for R2, derived from the Cloudflare token it was made from.
     pub r2: tokio::sync::Mutex<Option<(String, crate::tunnel::R2)>>,
     pub self_status: Mutex<SelfStatus>,
+    pub access: crate::access::Access,
     /// Problems that are not a failed deploy, like an unreachable source repo.
     pub problems: Mutex<HashMap<String, String>>,
     busy: Mutex<HashMap<String, String>>,
@@ -130,7 +135,12 @@ impl Ctx {
             Err(_) => State::default(),
         };
         Ok(Arc::new(Ctx {
-            http: reqwest::Client::builder().user_agent(concat!("automata/", env!("CARGO_PKG_VERSION"))).build()?,
+            http: reqwest::Client::builder()
+                .user_agent(concat!("automata/", env!("CARGO_PKG_VERSION")))
+                // Servers drop idle keep-alive connections after a while. Dropping ours first means
+                // a sync every few minutes does not reuse one that is already closed.
+                .pool_idle_timeout(Duration::from_secs(20))
+                .build()?,
             env,
             state: Mutex::new(state),
             state_path,
@@ -140,6 +150,7 @@ impl Ctx {
             tunnel_error: Mutex::default(),
             r2: tokio::sync::Mutex::default(),
             self_status: Mutex::new(SelfStatus { version: env!("CARGO_PKG_VERSION"), ..Default::default() }),
+            access: Default::default(),
             problems: Mutex::default(),
             busy: Mutex::default(),
             queue: tokio::sync::Mutex::new(()),

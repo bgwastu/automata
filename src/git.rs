@@ -18,7 +18,7 @@ pub async fn head(ctx: &Ctx, repo: &str, branch: &str) -> Result<String> {
         let basic = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{t}"));
         req = req.header("authorization", format!("Basic {basic}"));
     }
-    let res = req.send().await.with_context(|| format!("github {repo}"))?;
+    let res = send(req).await.with_context(|| format!("github {repo}"))?;
     match res.status().as_u16() {
         200 => {}
         401 | 403 | 404 => bail!("github {repo}: not found or no access"),
@@ -45,13 +45,29 @@ pub async fn download(ctx: &Ctx, repo: &str, commit: &str, dest: &Path) -> Resul
     if let Some(t) = &ctx.env.github_token {
         req = req.bearer_auth(t);
     }
-    let res = req.send().await?;
+    let res = send(req).await.with_context(|| format!("download {repo}"))?;
     if !res.status().is_success() {
         bail!("download {repo}@{}: HTTP {}", &commit[..7.min(commit.len())], res.status());
     }
     let bytes = res.bytes().await?;
     let dest = dest.to_path_buf();
     tokio::task::spawn_blocking(move || unpack(&bytes, &dest)).await?
+}
+
+/// Send, retrying twice when the request never got an answer. GitHub sometimes closes a pooled
+/// connection just as it is reused, which fails with "connection closed before message completed".
+async fn send(req: reqwest::RequestBuilder) -> reqwest::Result<reqwest::Response> {
+    let mut attempt = 0;
+    loop {
+        let try_req = req.try_clone().expect("GET requests have no streaming body");
+        match try_req.send().await {
+            Err(e) if attempt < 2 && (e.is_connect() || e.is_request() || e.is_timeout()) => {
+                attempt += 1;
+                tokio::time::sleep(Duration::from_secs(attempt)).await;
+            }
+            r => return r,
+        }
+    }
 }
 
 fn unpack(gz: &[u8], dest: &Path) -> Result<()> {

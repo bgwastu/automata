@@ -1,4 +1,4 @@
-//! One remotely managed Cloudflare Tunnel for every hostname, plus the DNS records pointing at it.
+//! One remotely managed Cloudflare Tunnel for every route, plus the DNS record for Automata's own domain.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::config::Config;
+use crate::config::{BackupRepo, Config, Keep};
 use crate::ctx::{Ctx, DnsRecord, Tunnel};
 use crate::docker::{self, docker};
 
@@ -21,6 +21,8 @@ const OWNER: &str = "managed by automata";
 pub struct Route {
     pub hostname: String,
     pub service: String,
+    /// Automata keeps a CNAME for this hostname. Other hostnames are the user's to point at the tunnel.
+    pub dns: bool,
 }
 
 #[derive(Deserialize)]
@@ -68,7 +70,7 @@ impl<'a> Api<'a> {
         env.result.context("cloudflare returned no result")
     }
 
-    async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.call(reqwest::Method::GET, path, None).await
     }
 }
@@ -79,7 +81,7 @@ struct Id {
 }
 
 /// The configured account, or the only one the token can see.
-async fn account(api: &Api<'_>, config: &Config) -> Result<String> {
+pub async fn account(api: &Api<'_>, config: &Config) -> Result<String> {
     if let Some(a) = &config.cloudflare_account {
         return Ok(a.clone());
     }
@@ -153,7 +155,7 @@ pub async fn ensure(ctx: &Ctx, api: &Api<'_>, config: &Config, gateway: &str) ->
     Ok(())
 }
 
-/// Point the tunnel at `routes` and make sure each hostname has a CNAME to it.
+/// Point the tunnel at `routes`, and keep a CNAME to it for the routes that ask for one.
 pub async fn sync(ctx: &Ctx, api: &Api<'_>, routes: &[Route]) -> Result<()> {
     let Tunnel { id, account, .. } = ctx.state(|s| s.tunnel.clone()).context("no tunnel")?;
     let hash = hex::encode(Sha256::digest(serde_json::to_vec(&(&id, routes))?));
@@ -167,7 +169,7 @@ pub async fn sync(ctx: &Ctx, api: &Api<'_>, routes: &[Route]) -> Result<()> {
     api.call::<Value>(reqwest::Method::PUT, &path, Some(json!({ "config": { "ingress": ingress } }))).await?;
 
     let target = format!("{id}.cfargotunnel.com");
-    let wanted: BTreeSet<&str> = routes.iter().map(|r| r.hostname.as_str()).collect();
+    let wanted: BTreeSet<&str> = routes.iter().filter(|r| r.dns).map(|r| r.hostname.as_str()).collect();
     let mut errors = vec![];
     for name in &wanted {
         if let Err(e) = ensure_record(ctx, api, name, &target).await {
@@ -250,18 +252,18 @@ async fn zone_of(api: &Api<'_>, hostname: &str) -> Result<String> {
     bail!("{hostname}: no Cloudflare zone for this domain in the account")
 }
 
+/// The backup bucket, signed with S3 credentials derived from the Cloudflare token.
 #[derive(Clone)]
 pub struct R2 {
-    pub repository: String,
-    pub key_id: String,
-    pub secret: String,
+    pub bucket: rusty_s3::Bucket,
+    pub creds: rusty_s3::Credentials,
 }
 
 /// R2's S3 API takes the Cloudflare token itself: its id is the access key, its SHA-256 the secret.
-/// Creates the bucket the first time.
-pub async fn r2(ctx: &Ctx, config: &Config, bucket: &str) -> Result<R2> {
+/// Creates the bucket the first time and keeps its expiry rules in line with `keep`.
+pub async fn r2(ctx: &Ctx, config: &Config, repo: &BackupRepo) -> Result<R2> {
     let api = Api::new(ctx, config)?;
-    let cache_key = hex::encode(Sha256::digest(format!("{}\0{bucket}", api.token)));
+    let cache_key = hex::encode(Sha256::digest(format!("{}\0{}\0{:?}", api.token, repo.bucket, repo.keep)));
     let mut cached = ctx.r2.lock().await;
     if let Some((k, r2)) = cached.as_ref()
         && *k == cache_key
@@ -277,17 +279,43 @@ pub async fn r2(ctx: &Ctx, config: &Config, bucket: &str) -> Result<R2> {
         Ok(t) => t,
         Err(_) => api.get::<Id>("/user/tokens/verify").await?,
     };
-    let buckets = format!("/accounts/{account}/r2/buckets");
-    if api.get::<Value>(&format!("{buckets}/{bucket}")).await.is_err() {
-        api.call::<Value>(reqwest::Method::POST, &buckets, Some(json!({ "name": bucket })))
+    let path = format!("/accounts/{account}/r2/buckets/{}", repo.bucket);
+    if api.get::<Value>(&path).await.is_err() {
+        let body = json!({ "name": repo.bucket });
+        api.call::<Value>(reqwest::Method::POST, &format!("/accounts/{account}/r2/buckets"), Some(body))
             .await
             .context("creating the R2 bucket; the token needs Account > Workers R2 Storage > Edit")?;
     }
+    api.call::<Value>(reqwest::Method::PUT, &format!("{path}/lifecycle"), Some(lifecycle(&repo.keep)))
+        .await
+        .context("setting the bucket's expiry rules")?;
+    let endpoint = format!("https://{account}.r2.cloudflarestorage.com").parse()?;
     let r2 = R2 {
-        repository: format!("s3:https://{account}.r2.cloudflarestorage.com/{bucket}"),
-        key_id: verified.id,
-        secret: hex::encode(Sha256::digest(api.token)),
+        bucket: rusty_s3::Bucket::new(endpoint, rusty_s3::UrlStyle::Path, repo.bucket.clone(), "auto")?,
+        creds: rusty_s3::Credentials::new(verified.id, hex::encode(Sha256::digest(api.token))),
     };
     *cached = Some((cache_key, r2.clone()));
     Ok(r2)
+}
+
+/// Each tier is a prefix that R2 empties by age, so nothing in Automata ever deletes a backup.
+fn lifecycle(keep: &Keep) -> Value {
+    const DAY: u64 = 86400;
+    let mut rules = vec![json!({
+        "id": "automata: abort stale uploads",
+        "enabled": true,
+        "conditions": { "prefix": "" },
+        "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": DAY } },
+    })];
+    for (tier, n, days) in [("daily", keep.daily, 1), ("weekly", keep.weekly, 7), ("monthly", keep.monthly, 31)] {
+        if n > 0 {
+            rules.push(json!({
+                "id": format!("automata: keep {tier} for {n}"),
+                "enabled": true,
+                "conditions": { "prefix": format!("{tier}/") },
+                "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": u64::from(n) * days * DAY } },
+            }));
+        }
+    }
+    json!({ "rules": rules })
 }

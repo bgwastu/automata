@@ -15,7 +15,8 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     let mut cmd = Command::new("docker");
-    cmd.args(args).stdin(Stdio::null()).kill_on_drop(true);
+    // Compose files can interpolate the environment, so keep Automata's own secrets out of it.
+    cmd.args(args).stdin(Stdio::null()).kill_on_drop(true).env_remove(crate::secret::VAR).env_remove("GITHUB_TOKEN");
     cmd
 }
 
@@ -80,6 +81,7 @@ pub struct Container {
     pub state: String,
     pub health: Option<String>,
     pub status: String,
+    pub image: String,
 }
 
 #[derive(Deserialize)]
@@ -88,6 +90,7 @@ struct PsLine {
     #[serde(rename = "ID")]
     id: String,
     names: String,
+    image: String,
     state: String,
     status: String,
     labels: String,
@@ -112,6 +115,7 @@ pub async fn containers() -> Result<Vec<Container>> {
                 state: c.state,
                 health,
                 status: c.status,
+                image: c.image,
             })
         })
         .collect()

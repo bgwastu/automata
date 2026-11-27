@@ -12,12 +12,15 @@ use tokio::process::Command;
 use crate::config::App;
 use crate::ctx::{Ctx, Release, now_ms};
 use crate::docker::{self, docker};
-use crate::{dotenv, git};
+use crate::git;
 
 #[derive(Debug, Clone)]
 pub struct Target {
     pub rev: String,
     pub commit: Option<String>,
+    /// Infra repo commit the app's folder was read from. Not part of the rev: an infra change
+    /// elsewhere in the repo does not redeploy this app.
+    pub infra: Option<String>,
 }
 
 pub const UP: &[&str] = &["up", "-d", "--build", "--wait", "--wait-timeout", "300", "--remove-orphans"];
@@ -113,12 +116,13 @@ async fn prepare(ctx: &Ctx, app: &App, target: &Target, dir: &Path) -> Result<Re
         }
     };
 
-    let file = compose_file(&context).await?;
+    let file = compose_file(&context, app).await?;
     let order = service_order(&file)?;
-    let secrets = dotenv::read(&app.dir.join(".env"))?;
+    let secrets = app.env.0.clone();
     let release = Release {
         rev: target.rev.clone(),
         commit: target.commit.clone(),
+        infra: target.infra.clone(),
         dir: dir.into(),
         compose: file,
         at: now_ms(),
@@ -204,7 +208,12 @@ pub async fn remove(ctx: &Ctx, name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn compose_file(dir: &Path) -> Result<PathBuf> {
+async fn compose_file(dir: &Path, app: &App) -> Result<PathBuf> {
+    if let Some(image) = &app.image {
+        let file = dir.join("automata.compose.json");
+        tokio::fs::write(&file, image_compose(image, &app.volumes).to_string()).await?;
+        return Ok(file);
+    }
     for f in ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"] {
         if tokio::fs::try_exists(dir.join(f)).await? {
             return Ok(dir.join(f));
@@ -218,6 +227,26 @@ async fn compose_file(dir: &Path) -> Result<PathBuf> {
         json!({ "services": { "app": { "build": ".", "volumes": ["data:/data"] } }, "volumes": { "data": {} } });
     tokio::fs::write(&file, generated.to_string()).await?;
     Ok(file)
+}
+
+/// A one-service compose file for `image:` apps. Named volumes are declared so Compose creates them
+/// as `<app>_<name>`, which is what backups look for.
+fn image_compose(image: &str, volumes: &[String]) -> Value {
+    let named: Map<String, Value> = volumes
+        .iter()
+        .filter_map(|v| v.split(':').next())
+        .filter(|from| !from.starts_with(['/', '.', '~']))
+        .map(|from| (from.to_string(), json!({})))
+        .collect();
+    let mut svc = json!({ "image": image });
+    if !volumes.is_empty() {
+        svc["volumes"] = json!(volumes);
+    }
+    let mut out = json!({ "services": { "app": svc } });
+    if !named.is_empty() {
+        out["volumes"] = Value::Object(named);
+    }
+    out
 }
 
 /// Service names in file order. `compose config` sorts them, and the first one is the default main service.
@@ -302,5 +331,24 @@ async fn prune(ctx: &Ctx, name: &str) {
         if Some(d.path()) != keep {
             let _ = tokio::fs::remove_dir_all(d.path()).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::image_compose;
+    use serde_json::json;
+
+    #[test]
+    fn generated_compose() {
+        assert_eq!(image_compose("nginx", &[]), json!({ "services": { "app": { "image": "nginx" } } }));
+        let vols = ["data:/app/data".to_string(), "/srv/x:/x:ro".to_string()];
+        assert_eq!(
+            image_compose("ghcr.io/a/b:latest", &vols),
+            json!({
+                "services": { "app": { "image": "ghcr.io/a/b:latest", "volumes": ["data:/app/data", "/srv/x:/x:ro"] } },
+                "volumes": { "data": {} },
+            })
+        );
     }
 }

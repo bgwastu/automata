@@ -30,8 +30,8 @@ if [ ! -f /etc/automata/env ]; then
 INFRA_REPO=owner/infra
 # Fine-grained token with read access to the infra repo and app repos.
 GITHUB_TOKEN=
-# From the infra repo's .env.keys. Decrypts the root .env and every apps/<name>/.env.
-DOTENV_PRIVATE_KEY=
+# Decrypts every encrypted_env in the infra repo.
+AUTOMATA_PASSWORD=
 ENV
   fresh=1
 fi
@@ -54,7 +54,8 @@ UNIT
 
 # cloudflared reaches the dashboard through the automata network's gateway.
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-  ufw allow in on automata0 to any port 8080 proto tcp >/dev/null
+  port=$(sed -n 's/^PORT=//p' /etc/automata/env)
+  ufw allow in on automata0 to any port "${port:-8080}" proto tcp >/dev/null
 fi
 
 systemctl daemon-reload

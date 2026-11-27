@@ -65,6 +65,7 @@ async fn once(ctx: &Ctx) {
         tunnel::sync(ctx, &api, &routes(ctx, &config, previous.as_deref())).await
     };
     *ctx.tunnel_error.lock().unwrap() = tunnel.await.err().map(|e| format!("{e:#}"));
+    crate::access::refresh(ctx, &config).await;
     ctx.scheduler.set(jobs(&config));
     ctx.changed();
 
@@ -130,26 +131,29 @@ async fn sync_infra(ctx: &Ctx) -> Result<PathBuf> {
 
 /// What should be running: the infra folder's hash, plus the source commit when the app has one.
 async fn target(ctx: &Ctx, app: &App) -> Result<Target> {
+    let infra = ctx.infra.lock().unwrap().commit.clone();
     let Some(source) = &app.source else {
-        return Ok(Target { rev: app.hash[..12].into(), commit: None });
+        return Ok(Target { rev: app.hash[..12].into(), commit: None, infra });
     };
     let commit = match &source.commit {
         Some(c) => c.clone(),
         None => git::head(ctx, &source.github, &source.branch).await?,
     };
-    Ok(Target { rev: format!("{}-{}", &commit[..7], &app.hash[..7]), commit: Some(commit) })
+    Ok(Target { rev: format!("{}-{}", &commit[..7], &app.hash[..7]), commit: Some(commit), infra })
 }
 
 fn routes(ctx: &Ctx, config: &Config, previous: Option<&Config>) -> Vec<Route> {
-    let mut out = vec![];
-    if let Some(d) = &config.dashboard {
-        out.push(Route { hostname: d.clone(), service: format!("http://automata-host:{}", ctx.env.port) });
-    }
+    // Automata's own domain goes to Automata, which serves the dashboard and proxies app paths.
+    let mut out: Vec<Route> = config
+        .domain
+        .iter()
+        .map(|d| Route { hostname: d.clone(), service: format!("http://automata-host:{}", ctx.env.port), dns: true })
+        .collect();
     // An app whose automata.yml stopped parsing keeps the routes it had.
     let kept = previous.into_iter().flat_map(|p| &p.apps).filter(|a| config.invalid.contains_key(&a.name));
     for app in config.apps.iter().chain(kept) {
         for d in &app.domains {
-            out.push(Route { hostname: d.clone(), service: format!("http://{}:{}", app.name, app.port) });
+            out.push(Route { hostname: d.clone(), service: format!("http://{}:{}", app.name, app.port), dns: false });
         }
     }
     // Cloudflare matches ingress rules in order, so wildcards go after exact names.
@@ -159,10 +163,6 @@ fn routes(ctx: &Ctx, config: &Config, previous: Option<&Config>) -> Vec<Route> {
 
 fn jobs(config: &Config) -> Vec<(Job, String)> {
     let mut jobs = vec![(Job::Images, config.image_check.clone()), (Job::SelfUpdate, "17 */6 * * *".into())];
-    if config.backup.is_some() {
-        jobs.push((Job::Prune, "0 5 * * 0".into()));
-        jobs.push((Job::Check, "0 6 1 * *".into()));
-    }
     for app in &config.apps {
         if let Some(b) = &app.backup {
             jobs.push((Job::Backup(app.name.clone()), b.schedule.clone()));
@@ -197,11 +197,6 @@ pub async fn job(ctx: &Ctx, job: Job) {
             if ctx.app(&name, |s| s.current.is_some()) {
                 ctx.queue(&name, "backup", crate::backup::backup(ctx, repo, app)).await;
             }
-        }
-        Job::Prune | Job::Check => {
-            let Some(repo) = &config.backup else { return };
-            let args: &[&str] = if job == Job::Prune { &["prune"] } else { &["check", "--read-data-subset", "2%"] };
-            ctx.queue("restic", args[0], crate::backup::upkeep(ctx, repo, args)).await;
         }
         Job::Images => {
             for app in &config.apps {

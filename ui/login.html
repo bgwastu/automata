@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Sign in | automata</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="login">
+    <form method="post" action="/login">
+      <strong>automata</strong>
+      <!-- Lets password managers file the password under this site. -->
+      <input type="text" name="username" value="automata" autocomplete="username" hidden />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus />
+      <!--message-->
+      <button type="submit">Sign in</button>
+    </form>
+  </body>
+</html>

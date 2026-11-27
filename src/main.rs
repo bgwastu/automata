@@ -1,15 +1,18 @@
+mod access;
 mod backup;
 mod config;
 mod ctx;
 mod deploy;
 mod docker;
-mod dotenv;
 mod git;
 mod images;
+mod proxy;
 mod reconcile;
 mod sched;
+mod secret;
 mod selfupdate;
 mod server;
+mod session;
 mod tunnel;
 
 use std::time::Duration;
@@ -26,7 +29,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some("update") => update().await,
-        Some(other) => bail!("unknown command {other}\nusage: automata [update | --version]"),
+        Some("encrypt") => {
+            let mut value = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)?;
+            println!("{}", secret::encrypt(value.strip_suffix('\n').unwrap_or(&value))?);
+            Ok(())
+        }
+        Some(other) => bail!("unknown command {other}\nusage: automata [update | encrypt < value | --version]"),
     }
 }
 
@@ -36,6 +45,7 @@ async fn serve() -> Result<()> {
         .without_time()
         .init();
     let ctx = ctx::Ctx::new(config::Env::load()?)?;
+    session::init(&ctx.env.data)?;
 
     // Docker may still be starting at boot.
     let gateway = loop {

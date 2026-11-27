@@ -1,4 +1,4 @@
-//! One scheduler loop for every periodic job: backups, repository upkeep, image checks and self-update.
+//! One scheduler loop for every periodic job: backups, image checks and self-update.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,8 +20,6 @@ pub fn next(expr: &str) -> Option<DateTime<Local>> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Job {
     Backup(String),
-    Prune,
-    Check,
     Images,
     SelfUpdate,
 }

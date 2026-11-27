@@ -3,27 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
     <title>automata</title>
     <link rel="stylesheet" href="/style.css" />
     <script type="module" src="/app.js"></script>
   </head>
   <body>
     <header>
-      <strong>automata</strong>
-      <span id="infra"></span>
+      <strong class="brand">automata</strong>
+      <span id="infra" class="group"></span>
       <span id="synced" class="muted"></span>
-      <button id="sync" title="Pull the infra repo and reconcile (s)">sync</button>
+      <button id="sync" class="btn" title="Pull the infra repo and reconcile (s)">Sync</button>
       <span class="grow"></span>
-      <span id="tunnel"></span>
+      <span id="status" class="group"></span>
+      <span id="user" class="muted"></span>
+      <button id="logout" class="btn" hidden>Sign out</button>
     </header>
     <div id="alerts"></div>
     <main>
-      <table>
-        <thead>
-          <tr><th>app</th><th>status</th><th>domain</th><th>release</th><th>deployed</th><th>backup</th></tr>
-        </thead>
-        <tbody id="apps"></tbody>
-      </table>
+      <div id="apps"></div>
       <p id="empty" hidden>
         No apps yet. Add <code>apps/&lt;name&gt;/automata.yml</code> to the infra repo and push.
       </p>
@@ -31,14 +29,15 @@
     <section id="pane" hidden>
       <div class="bar">
         <strong id="pane-name"></strong>
-        <span id="pane-source" class="muted"></span>
+        <span id="pane-source" class="group muted"></span>
         <span class="grow"></span>
-        <span id="actions"></span>
+        <span id="actions" class="group"></span>
+        <button id="close" class="btn" title="Close (Esc)">Close</button>
       </div>
       <div class="bar tabs" id="tabs">
-        <button data-tab="logs">logs</button>
-        <button data-tab="task">last task</button>
-        <button data-tab="backups">backups</button>
+        <button data-tab="logs" title="l">Logs</button>
+        <button data-tab="task" title="t">Last task</button>
+        <button data-tab="backups">Backups</button>
       </div>
       <pre id="out"></pre>
     </section>
