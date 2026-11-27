@@ -13,7 +13,6 @@
       <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></symbol>
       <symbol id="i-git" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10m12-10a6 6 0 0 1-6 6H6"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5m-5 0a8 8 0 0 1 13.7-5.7L20 9m0 3a8 8 0 0 1-13.7 5.7L4 15"/></symbol>
-      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
       <symbol id="i-warning" viewBox="0 0 24 24"><path d="M10.3 4.9 2.8 18a1.5 1.5 0 0 0 1.3 2.2h15.8a1.5 1.5 0 0 0 1.3-2.2L13.7 4.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></symbol>
       <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
@@ -33,16 +32,6 @@
       <div class="shell mast-inner">
         <a class="brand" href="#" aria-label="Automata apps"><svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg>Automata</a>
         <nav aria-label="Main navigation"><a class="home-link" href="#">Apps</a></nav>
-        <div class="system">
-          <span id="tunnel"></span>
-          <details id="account" hidden>
-            <summary><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg><span>Account</span></summary>
-            <div class="account-menu">
-              <span id="user"></span>
-              <button id="logout" type="button">Sign out</button>
-            </div>
-          </details>
-        </div>
       </div>
     </header>
     <main class="shell layout">
@@ -116,6 +105,9 @@
       </section>
       <p id="unavailable" class="unavailable" tabindex="-1" hidden></p>
     </main>
-    <footer class="shell footer"><span id="version"></span></footer>
+    <footer class="shell footer">
+      <span id="version"></span>
+      <button id="logout" type="button" hidden>Sign out</button>
+    </footer>
   </body>
 </html>

@@ -69,10 +69,7 @@ export function renderHeader(view) {
   const synced = $("synced");
   synced.textContent = infra.synced_at ? `Checked ${age(infra.synced_at).toLowerCase()}` : "";
   synced.title = infra.synced_at ? time(infra.synced_at) : "";
-  updateHtml($("tunnel"), view.tunnel_error ? statusHtml({ tone: "bad", label: "Tunnel error" }) :
-    view.domain ? statusHtml({ tone: "good", label: "Tunnel configured" }) : "");
-  $("user").textContent = auth.user || "";
-  $("account").hidden = !(auth.password || auth.access === "on");
+  $("logout").hidden = !(auth.password || auth.access === "on");
   $("version").textContent = `Automata ${view.version}${view.latest ? ` / ${view.latest} available` : ""}`;
   const alerts = [
     infra.error && `Infra: ${infra.error}`,
@@ -90,9 +87,6 @@ export function renderHeader(view) {
 const routeLink = (url) => url.startsWith("*.") ? escape(url) :
   `<a class="route-link" href="https://${escape(url)}" target="_blank" rel="noopener"><span>${escape(url)}</span>${icon("external")}</a>`;
 const routesList = (urls) => `<ul class="routes">${urls.map((url) => `<li>${routeLink(url)}</li>`).join("")}</ul>`;
-const routesCell = ([first, ...rest]) => first
-  ? routeLink(first) + (rest.length ? `<details class="route-details"><summary>${rest.length} more ${rest.length === 1 ? "route" : "routes"}</summary>${routesList(rest)}</details>` : "")
-  : '<span class="muted">No routes</span>';
 
 function deployCell(app, repo) {
   const link = appLink(app.name, "task");
@@ -133,7 +127,7 @@ export function renderApps(apps, view) {
     if (runtime.tone === "bad" || app.failed || app.error) attention += 1;
     updateHtml(row.cells[1], statusHtml(runtime));
     updateHtml(row.cells[2], deployCell(app, repo));
-    updateHtml(row.cells[3], routesCell(app.urls));
+    updateHtml(row.cells[3], app.urls.length ? routesList(app.urls) : '<span class="muted">No routes</span>');
     if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
   });
   for (const row of existing.values()) row.remove();

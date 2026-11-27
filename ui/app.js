@@ -248,7 +248,7 @@ document.addEventListener("keydown", (event) => {
   if (!view || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
       event.target.closest("input, textarea, select, [contenteditable]")) return;
   const key = event.key;
-  if (key === "Escape" && route().name && !$("account").open) navigate("", true);
+  if (key === "Escape" && route().name) navigate("", true);
   if (key === "s") sync();
   if (key === "r") appAction("restart", "Restart requested.");
   if (key === "b" && current?.backup) appAction("backup", "Backup requested.");

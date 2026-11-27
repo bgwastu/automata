@@ -64,34 +64,22 @@ code { font-family: var(--mono); font-size: .9em; }
 .shell { width: min(1220px, 100% - 64px); margin-inline: auto; }
 .masthead { border-bottom: 1px solid var(--line); background: var(--surface); }
 .mast-inner { display: flex; align-items: center; gap: 26px; min-height: 60px; }
-.brand, .home-link, #account summary { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none; }
+.brand, .home-link { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); text-decoration: none; }
 .brand { font-weight: 750; font-size: 1.04rem; }
 .brand .icon { color: var(--accent); font-size: 1.15rem; }
 .home-link { padding: 18px 2px; border-bottom: 2px solid transparent; font-size: .92rem; }
 .home-link[aria-current] { border-color: var(--accent); color: var(--accent); font-weight: 650; }
-.system { margin-left: auto; display: flex; align-items: center; gap: 18px; font-size: .87rem; }
-#tunnel { white-space: nowrap; }
-#account { position: relative; }
-#account summary { cursor: pointer; list-style: none; }
-#account summary::-webkit-details-marker { display: none; }
-.account-menu {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  top: calc(100% + 12px);
-  width: max-content;
-  max-width: calc(100vw - 32px);
-  overflow-wrap: anywhere;
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-}
-#user:empty { display: none; }
 .layout { flex: 1; margin-block: 28px; }
-.footer { margin-block: 0 22px; color: var(--muted); font-size: .83rem; }
+.footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-block: 0 16px; color: var(--muted); font-size: .83rem; }
+.footer button {
+  min-height: 44px;
+  padding-inline: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; margin-bottom: 20px; }
 .page-heading h1 { margin: 0; font-size: clamp(1.65rem, 3.3vw, 2.1rem); line-height: 1.2; letter-spacing: -.035em; overflow-wrap: anywhere; }
 .subheading { margin: 5px 0 0; font-size: .92rem; }
@@ -144,15 +132,12 @@ tbody td, tbody th { border-top: 1px solid var(--line); }
 .deploy-ok { display: inline-flex; align-items: baseline; gap: 5px; }
 .cell-meta { display: block; color: var(--muted); font-size: .82rem; margin-top: 3px; font-variant-numeric: tabular-nums; }
 .cell-meta.fetched { display: inline; margin-inline-start: 7px; }
-.route-details { margin-top: 4px; }
-.route-details summary { cursor: pointer; color: var(--accent); font-size: .86rem; }
-.routes { list-style: none; margin: 5px 0 0; padding: 0; }
+.routes { list-style: none; margin: 0; padding: 0; }
 .routes li + li { margin-top: 5px; }
 .overview h2 { font-size: 1.04rem; margin: 20px 0 8px; }
 .facts { display: grid; grid-template-columns: minmax(94px, auto) minmax(0, 1fr); gap: 8px 14px; margin: 0; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
-.facts .routes { margin-top: 0; }
 .release { display: flex; flex-wrap: wrap; gap: 3px 12px; }
 .table-scroll { overflow-x: auto; }
 
@@ -194,9 +179,6 @@ tbody td, tbody th { border-top: 1px solid var(--line); }
   .shell { width: calc(100% - 28px); }
   .mast-inner { min-height: 53px; gap: 12px; }
   .home-link { padding-block: 15px; }
-  .system { gap: 10px; }
-  #account summary { min-height: 44px; padding-inline: 8px; }
-  #account summary span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .layout { margin-top: 20px; }
   .infra-strip time { margin-left: 0; }
   .app-table, .container-table, .app-table tbody, .container-table tbody { display: block; }
@@ -222,7 +204,4 @@ tbody td, tbody th { border-top: 1px solid var(--line); }
   .container-table .uptime-cell { grid-column: 1; color: var(--muted); }
   .container-table .logs-cell { grid-column: 2; justify-self: end; }
   .container-table .logs-link { min-height: 44px; margin-block: -8px; }
-}
-@media (max-width: 350px) {
-  .mast-inner { flex-wrap: wrap; gap: 0 10px; }
 }
