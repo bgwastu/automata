@@ -18,6 +18,7 @@ function route() {
 }
 
 function navigate(hash, focus = false) {
+  $("app-actions").open = false;
   if (location.hash !== hash) history.pushState(null, "", hash || location.pathname + location.search);
   render();
   if (focus) {
@@ -63,9 +64,7 @@ function render() {
   }
   $("workspace").hidden = !current;
   $("unavailable").hidden = !name || !!current;
-  const home = document.querySelector(".home-link");
-  if (!name) home.setAttribute("aria-current", "page");
-  else home.removeAttribute("aria-current");
+  $("home-link").hidden = !name;
   if (name && !current) $("unavailable").textContent = `App “${name}” is unavailable.`;
 
   const id = activeView === "logs" ? container : null;
@@ -234,17 +233,26 @@ $("logout").addEventListener("click", async () => {
 });
 
 document.addEventListener("click", (event) => {
+  if (!$("app-actions").contains(event.target)) $("app-actions").open = false;
   const link = event.target.closest('a[href^="#"]');
   if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
   event.preventDefault();
   navigate(link.hash, !link.matches(".tabs a"));
 });
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => {
+  $("app-actions").open = false;
+  render();
+});
 
 document.addEventListener("keydown", (event) => {
   if (!view || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
       event.target.closest("input, textarea, select, [contenteditable]")) return;
   const key = event.key;
+  if (key === "Escape" && $("app-actions").open) {
+    $("app-actions").open = false;
+    $("app-actions").querySelector("summary").focus();
+    return;
+  }
   if (key === "Escape" && route().name) navigate("", true);
   if (key === "s") sync();
   if (key === "r") appAction("restart", "Restart requested.");

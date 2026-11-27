@@ -71,6 +71,8 @@ export function renderHeader(view) {
   const synced = $("synced");
   synced.textContent = infra.synced_at ? `${infra.result ? "Synced" : "Checked"} ${age(infra.synced_at).toLowerCase()}` : "";
   synced.title = infra.synced_at ? time(infra.synced_at) : "";
+  if (infra.synced_at) synced.dateTime = new Date(infra.synced_at).toISOString();
+  else synced.removeAttribute("datetime");
   $("logout").hidden = !auth.password;
   $("version").textContent = `Automata ${view.version}${view.latest ? ` / ${view.latest} available` : ""}`;
   const alerts = [
@@ -87,7 +89,7 @@ export function renderHeader(view) {
 }
 
 const routeLink = (url) => url.startsWith("*.") ? escape(url) :
-  `<a class="route-link" href="https://${escape(url)}" target="_blank" rel="noopener"><span>${escape(url)}</span>${icon("external")}</a>`;
+  `<a class="route-link" href="https://${escape(url)}" target="_blank" rel="noopener"><span>${escape(url).split("/").join("/<wbr>")}</span>${icon("external")}</a>`;
 const routesList = (urls) => `<ul class="routes">${urls.map((url) => `<li>${routeLink(url)}</li>`).join("")}</ul>`;
 
 function deployCell(app, repo) {
@@ -106,7 +108,7 @@ function deployCell(app, repo) {
       (successful ? `<span class="cell-meta">Last success ${successful}</span>` : "");
   }
   if (!app.rev) return '<span class="muted">No deploy yet</span>';
-  return `<span class="deploy-ok">${icon("check")}<span>${deployed || at || "Deployed"}${deployed && at ? `<span class="cell-meta">${at}</span>` : ""}</span></span>`;
+  return `<span class="deploy-ok">${at ? `<span><span class="deploy-label">Deployed </span>${at}</span>` : ""}${deployed || (at ? "" : "Deployed")}</span>`;
 }
 
 export function renderApps(apps, view) {
@@ -121,8 +123,8 @@ export function renderApps(apps, view) {
       row = document.createElement("tr");
       row.dataset.name = app.name;
       row.setAttribute("role", "row");
-      row.innerHTML = '<th scope="row" role="rowheader"></th><td role="cell"></td><td role="cell"></td><td role="cell" class="route-cell"></td>';
-      updateHtml(row.cells[0], `<a class="app-link" href="${appLink(app.name)}">${icon("box")}<span>${escape(app.name)}</span></a>`);
+      row.innerHTML = '<th scope="row" role="rowheader"></th><td role="cell" class="runtime-cell"></td><td role="cell" class="deploy-cell"></td><td role="cell" class="route-cell"></td>';
+      updateHtml(row.cells[0], `<a class="app-link" href="${appLink(app.name)}"><span class="app-glyph">${icon("box")}</span><span>${escape(app.name)}</span>${icon("right")}</a>`);
     }
     existing.delete(app.name);
     const runtime = status(app, view.runtime_error);
@@ -134,7 +136,7 @@ export function renderApps(apps, view) {
   });
   for (const row of existing.values()) row.remove();
   if (list.contains(focus) && document.activeElement !== focus) focus.focus({ preventScroll: true });
-  $("app-summary").textContent = apps.length ? `${apps.length} configured${attention ? `, ${attention} need${attention === 1 ? "s" : ""} attention` : ""}` : "";
+  $("app-summary").textContent = attention ? `${attention} of ${apps.length} need attention` : apps.length ? `${apps.length} managed` : "";
   $("app-table").hidden = !apps.length;
   $("empty").hidden = !!apps.length;
   $("empty").textContent = "No apps yet. Add an app under apps/ in the infra repository.";
@@ -154,10 +156,13 @@ export function renderLogContainers(app, selected) {
 function containerRow(app, container) {
   const { id, name, service, health, state, image, status } = container;
   const tone = failing(container) ? "bad" : health === "starting" ? "busy" : state === "running" ? "good" : "muted";
-  return `<tr role="row"><th role="rowheader" scope="row">${escape(service)}
-    ${name === service ? "" : `<span class="cell-meta">${escape(name)}</span>`}</th><td role="cell">${statusHtml({ tone, label: health || state })}</td>
-    <td role="cell" class="image-cell"><code>${escape(image)}</code></td><td role="cell" class="uptime-cell">${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</td>
-    <td role="cell" class="logs-cell"><a class="logs-link" href="${appLink(app.name, "logs", id)}" aria-label="Logs for ${escape(name)}">${icon("terminal")}<span>Logs</span></a></td></tr>`;
+  const label = health || state;
+  return `<li class="container-row"><div class="container-name"><strong>${escape(service)}</strong>
+    ${name === service ? "" : `<span class="cell-meta">${escape(name)}</span>`}</div>
+    <div class="container-state">${statusHtml({ tone, label: label.charAt(0).toUpperCase() + label.slice(1) })}
+      <span class="cell-meta">${escape(status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, ""))}</span></div>
+    <code class="container-image">${escape(image)}</code>
+    <a class="logs-link" href="${appLink(app.name, "logs", id)}" aria-label="Logs for ${escape(name)}">${icon("terminal")}Logs</a></li>`;
 }
 
 export function renderOverview(app, view) {
@@ -166,19 +171,18 @@ export function renderOverview(app, view) {
     sourceRepo && app.commit && `<span>Source ${github(sourceRepo, app.commit)}</span>`,
     app.infra_commit && `<span>Infra ${github(view.infra.repo.split("#")[0], app.infra_commit)}</span>`,
     app.rev && !app.infra_commit && !app.commit && `<span>Revision <code>${escape(app.rev)}</code></span>`,
-    app.deployed_at && `<time>${escape(time(app.deployed_at))}</time>`,
+    app.deployed_at && `<span class="release-time">${calendarTime(app.deployed_at, new Date())}</span>`,
   ].filter(Boolean);
   const source = app.image ? `<code>${escape(app.image)}</code>` : app.source ? github(sourceRepo) : "Infra repository";
   const imageCheck = app.images && `<dt>Image check</dt><dd class="${app.images.ok ? "" : "bad"}">${escape(app.images.message || (app.images.ok ? "Completed" : "Failed"))}</dd>`;
-  updateHtml($("overview"), `<h2>Deployment</h2><dl class="facts">
+  updateHtml($("overview"), `<section aria-labelledby="deployment-title"><h2 id="deployment-title">Deployment</h2><dl class="facts">
     <dt>Routes</dt><dd>${app.urls.length ? routesList(app.urls) : '<span class="muted">No routes configured</span>'}</dd>
     <dt>${app.image ? "Configured image" : "Source"}</dt><dd>${source}</dd>
-    <dt>Deployed release</dt><dd class="release">${release.join("") || '<span class="muted">Not deployed</span>'}</dd>
+    <dt>Release</dt><dd class="release">${release.join("") || '<span class="muted">Not deployed</span>'}</dd>
     ${imageCheck || ""}
-  </dl><h2>Containers</h2>${app.containers.length ? `<div class="table-scroll">
-    <table class="container-table" role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Service</th><th scope="col">Health</th><th scope="col">Image</th><th scope="col">Status</th><th scope="col" class="logs-cell">Output</th></tr></thead>
-    <tbody role="rowgroup">${app.containers.map((container) => containerRow(app, container)).join("")}</tbody></table></div>` :
-    `<p class="muted">${view.runtime_error ? "Container status is unavailable." : "No containers."}</p>`}`);
+  </dl></section><section aria-labelledby="containers-title"><h2 id="containers-title">Containers</h2>
+    ${app.containers.length ? `<ul class="container-list" role="list">${app.containers.map((container) => containerRow(app, container)).join("")}</ul>` :
+    `<p class="muted">${view.runtime_error ? "Container status is unavailable." : "No containers."}</p>`}</section>`);
 }
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
@@ -195,10 +199,10 @@ function relativeDay(date, now) {
     (date.getFullYear() === now.getFullYear() ? dayFormat : dateFormat).format(date);
 }
 
-function backupTime(at, now) {
+function calendarTime(at, now) {
   const date = new Date(at);
   const day = now ? relativeDay(date, now) : dateFormat.format(date);
-  return `<time datetime="${date.toISOString()}" title="${escape(exactFormat.format(date))}">${escape(day)} at ${escape(clockFormat.format(date))}</time>`;
+  return `<time datetime="${date.toISOString()}" title="${escape(exactFormat.format(date))}">${escape(day)} <span class="clock">at ${escape(clockFormat.format(date))}</span></time>`;
 }
 
 export function renderBackupSummary({ last, next, schedule }) {
@@ -207,11 +211,11 @@ export function renderBackupSummary({ last, next, schedule }) {
   const previous = failed ? "Last backup failed" : "Last backup";
   updateHtml($("backup-summary"), `<div>
     <dt class="${failed ? "bad" : ""}">${icon(failed ? "warning" : last ? "check" : "archive")}${previous}</dt>
-    <dd>${last ? backupTime(last.at, now) : "No backups yet"}</dd>
+    <dd>${last ? calendarTime(last.at, now) : "No backups yet"}</dd>
     ${failed && last.message ? `<dd class="backup-detail">${escape(last.message)}</dd>` : ""}
   </div><div>
     <dt>${icon("clock")}Next backup</dt>
-    <dd>${next != null ? backupTime(next, now) : "No upcoming run"}</dd>
+    <dd>${next != null ? calendarTime(next, now) : "No upcoming run"}</dd>
     ${next == null && schedule ? `<dd class="backup-detail">Schedule <code>${escape(schedule)}</code></dd>` : ""}
   </div>`);
 }
@@ -219,7 +223,7 @@ export function renderBackupSummary({ last, next, schedule }) {
 export function renderSnapshots(list) {
   const size = (bytes) => bytes == null ? "—" : bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${(bytes / 1e6).toFixed(1)} MB`;
   const rows = list.map((item) => `<tr role="row">
-    <td class="snapshot-created" role="cell">${backupTime(item.time)}</td>
+    <td class="snapshot-created" role="cell">${calendarTime(item.time)}</td>
     <td class="snapshot-tier" role="cell">${escape(item.id.split("/")[0])}</td>
     <td class="snapshot-size" role="cell">${size(item.size)}</td>
     <td class="snapshot-action" role="cell"><button type="button" data-restore="${escape(item.id)}">Restore</button></td></tr>`);
