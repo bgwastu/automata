@@ -4,7 +4,7 @@ const escape = (value) => String(value ?? "").replace(/[&<>"]/g, (char) => (
 ));
 
 export const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-export const time = (ms) => new Date(ms).toLocaleString();
+const time = (ms) => new Date(ms).toLocaleString();
 export const appLink = (name, view = "overview", container) => `#${new URLSearchParams({
   app: name, ...(view !== "overview" && { view }), ...(container && { container }),
 })}`;
@@ -33,7 +33,8 @@ export function status(app, runtimeError) {
   const total = app.containers.length;
   if (problem) return { tone: "bad", label: `${problem.service} ${problem.health === "unhealthy" ? "unhealthy" : problem.state}` };
   if (app.containers.some((container) => container.health === "starting")) return { tone: "busy", label: "Starting" };
-  if (running) return { tone: running === total ? "good" : "busy", label: `${running}/${total} running` };
+  if (running === total && total > 0) return { tone: "good", label: "Running" };
+  if (running) return { tone: "busy", label: `${running} of ${total} running` };
   return app.rev ? { tone: "bad", label: "Stopped" } : { tone: "muted", label: "Not deployed" };
 }
 
@@ -178,6 +179,37 @@ export function renderOverview(app, view) {
     <table class="container-table" role="table"><thead role="rowgroup"><tr role="row"><th scope="col">Service</th><th scope="col">Health</th><th scope="col">Image</th><th scope="col">Status</th><th scope="col" class="logs-cell">Output</th></tr></thead>
     <tbody role="rowgroup">${app.containers.map((container) => containerRow(app, container)).join("")}</tbody></table></div>` :
     `<p class="muted">${view.runtime_error ? "Container status is unavailable." : "No containers."}</p>`}`);
+}
+
+const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const dateFormat = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
+const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const exactFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short",
+});
+
+function backupTime(at, now) {
+  const date = new Date(at);
+  const localDay = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const days = (localDay(date) - localDay(now)) / 86_400_000;
+  const day = ({ "-1": "Yesterday", 0: "Today", 1: "Tomorrow" })[days] ||
+    (date.getFullYear() === now.getFullYear() ? dayFormat : dateFormat).format(date);
+  return `<time datetime="${date.toISOString()}" title="${escape(exactFormat.format(date))}">${escape(day)} at ${escape(clockFormat.format(date))}</time>`;
+}
+
+export function renderBackupSummary({ last, next, schedule }) {
+  const now = new Date();
+  const failed = last?.ok === false;
+  const previous = failed ? "Last backup failed" : "Last backup";
+  updateHtml($("backup-summary"), `<div>
+    <dt class="${failed ? "bad" : ""}">${icon(failed ? "warning" : last ? "check" : "archive")}${previous}</dt>
+    <dd>${last ? backupTime(last.at, now) : "No backups yet"}</dd>
+    ${failed && last.message ? `<dd class="backup-detail">${escape(last.message)}</dd>` : ""}
+  </div><div>
+    <dt>${icon("clock")}Next backup</dt>
+    <dd>${next != null ? backupTime(next, now) : "No upcoming run"}</dd>
+    ${next == null && schedule ? `<dd class="backup-detail">Schedule <code>${escape(schedule)}</code></dd>` : ""}
+  </div>`);
 }
 
 export function renderSnapshots(list) {

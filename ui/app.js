@@ -1,4 +1,4 @@
-import { $, appLink, renderApps, renderHeader, renderLogContainers, renderOverview, renderSnapshots, snapshotMessage, status, statusHtml, time } from "/api/dashboard/view.js";
+import { $, appLink, renderApps, renderBackupSummary, renderHeader, renderLogContainers, renderOverview, renderSnapshots, snapshotMessage, status, statusHtml } from "/api/dashboard/view.js";
 
 import { followOutput } from "/api/dashboard/logs.js";
 
@@ -107,11 +107,7 @@ function renderWorkspace(app, container) {
   $("snapshots").hidden = activeView !== "backups";
   if (activeView === "overview") renderOverview(app, view);
   if (activeView === "backups") {
-    const { last, next, schedule } = app.backup;
-    $("backup-summary").textContent = [
-      last && `${last.ok ? "Last backup" : "Backup failed"} ${time(last.at)}${!last.ok && last.message ? `: ${last.message}` : ""}`,
-      next ? `Next backup ${time(next)}` : `Schedule ${schedule}`,
-    ].filter(Boolean).join(" / ");
+    renderBackupSummary(app.backup);
     for (const button of $("snapshot-list").querySelectorAll("button")) button.disabled = $("backup").disabled;
   }
 }
